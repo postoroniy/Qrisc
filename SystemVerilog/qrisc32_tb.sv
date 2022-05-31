@@ -486,19 +486,21 @@ import risc_pack::*;
         loadIram({XOR,DECR_0,7'h0,R7,R11,R2});//compare R7 with -4
     endtask;
 
-    task    load_unsorted_data(bit[1:0] kind);
+    typedef enum {reversed_unsorted, randomly_unsorted, already_sorted} data_kind_t;
+
+    task load_unsorted_data(data_kind_t kind);
     //loading  unsorted data in Dram
       integer i;
       for(i=0;i<10;i++)
-          Dram.sram[i]=(kind==0)?10-i:           //reverse unsorted
-                       (kind==1)?100+$random%100://randomly unsorted
+          Dram.sram[i]=(kind==reversed_unsorted)?10-i:           //reverse unsorted
+                       (kind==randomly_unsorted)?100+$random%100://randomly unsorted
                                  i+1;            //already sorted
     endtask;
 
     bit reset_d, Istop_active_d;
     integer cycles=0;
-    integer algorithm=0;
-    integer loop=0;
+    enum {bubble, shell0, shell1, end_of_alg} algorithm;
+    data_kind_t data_kind;
 
     always @ (posedge clk)
     begin
@@ -511,54 +513,66 @@ import risc_pack::*;
 
       if(reset && ~reset_d)
         case(algorithm)
-          0 : begin
-              loop<=loop+1;
-              load_unsorted_data(loop);
-              if(loop==0)begin
-                $display("Load buble sort...");
-                load_buble_sort;
+          bubble : begin
+              load_unsorted_data(data_kind);
+              data_kind <= data_kind.next();
+              case(data_kind)
+                data_kind.first() :
+                  begin
+                    $display("Load buble sort...");
+                    load_buble_sort;
+                    $display("Programm size is %d Words",address);
+                  end
+                data_kind.last() :
+                  begin
+                    algorithm <= algorithm.next();
+                    data_kind <= reversed_unsorted;
+                  end
+                endcase
+            end
+
+          shell0 : begin
+                load_unsorted_data(data_kind);
+                data_kind <= data_kind.next();
+                case(data_kind)
+                  data_kind.first() :
+                    begin
+                      $display("Load shell modified...");
+                      load_shell_sort_mdf;
+                      $display("Programm size is %d Words",address);
+                    end
+                  data_kind.last() :
+                    begin
+                      algorithm <= algorithm.next();
+                      data_kind <= reversed_unsorted;
+                    end
+                endcase
+            end
+
+          shell1 : begin
+            load_unsorted_data(data_kind);
+            data_kind <= data_kind.next();
+            case(data_kind)
+              data_kind.first() :
+              begin
+                $display("Load shell first...");
+                shell_first;
                 $display("Programm size is %d Words",address);
-              end
-              if(loop==2)begin
-                algorithm<=1;
-                loop<=0;
-              end
-              cycles<=0;
-            end
-
-          1:begin
-            loop<=loop+1;
-            load_unsorted_data(loop);
-            if(loop==0)begin
-              $display("Load shell modified...");
-              load_shell_sort_mdf;
-              $display("Programm size is %d Words",address);
-            end
-            if(loop==2)begin
-              algorithm<=2;
-              loop<=0;
-            end
-            cycles<=0;
+                end
+              data_kind.last() :
+                begin
+                  algorithm <= algorithm.next();
+                  data_kind <= reversed_unsorted;
+                end
+            endcase
           end
 
-          2:begin
-            loop<=loop+1;
-            load_unsorted_data(loop);
-            if(loop==0)begin
-              $display("Load shell first...");
-              shell_first;
-              $display("Programm size is %d Words",address);
-            end
-            if(loop==2)begin
-              algorithm<=3;
-              loop<=0;
-            end
-            cycles<=0;
-          end
-          3:done<=1;
+          end_of_alg : done<=1;
         endcase
 
-      if(~reset)
+      if(reset && ~reset_d)
+        cycles<=0;
+      else if(~reset)
         cycles <= cycles + 1;
     end
 endmodule
