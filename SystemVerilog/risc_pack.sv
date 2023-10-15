@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2012  Vinogradov Viacheslav
+//    Copyright (C) 2010-2023  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -69,9 +69,9 @@ package risc_pack;
         bit             jmpnc;
     }pipe_struct;
 
-//typedef enum logic[3:0]{
-    //operations
-parameter[3:0]    LDR=4'd0;//,//LDR Rdst,[Rsrc1],-+Rsrc2
+//operations
+parameter[3:0]
+    LDR=4'd0;//LDR Rdst,[Rsrc1],-+Rsrc2
     //[31:28]LDR_op
     //[27:26] type of LDR op
     //0- Rdst= Rsrc1
@@ -94,7 +94,7 @@ parameter[3:0]    LDR=4'd0;//,//LDR Rdst,[Rsrc1],-+Rsrc2
     //[9:5]src1
     //[4:0]dst
 parameter[3:0]
-    STR=4'd1;//,//STR Rdst,[Rsrc1],-+Rsrc2
+    STR=4'd1;//STR Rdst,[Rsrc1],-+Rsrc2
     //[31:28]STR_op
     //[27:26] type of STORE op
     //3- [Rsrc1+offset]=Rdst
@@ -114,7 +114,7 @@ parameter[3:0]
     //[9:5]src1
     //[4:0]dst
 parameter[3:0]
-    JMPUNC=4'd2;//,//unconditional jump
+    JMPUNC=4'd2;//unconditional jump
     //[31:28]   jump
     //[27:26]   type of jumps
     //0 - jmp   pc[25:0]=code[25:0]
@@ -137,7 +137,7 @@ parameter[3:0]
     //[9:5]src1
     //[4:0]dst
 parameter[3:0]
-    JMPF=4'd3;//,//conditional jumps
+    JMPF=4'd3;//conditional jumps
     //[31:28]   jump
     //[27:26]   type of jumps
     //0 - jmpz  pc=pc+offset
@@ -188,7 +188,7 @@ parameter[3:0]
     //[4:0]dst
 //} OPCODE;
 parameter[3:0]
-    LDRF=4'd5;//,//LDRF Rdst,Rsrc1,-+Rsrc2
+    LDRF=4'd5;//LDRF Rdst,Rsrc1,-+Rsrc2
     //[31:28]LDRF_op
     //[27:26] type of LDRF op
     //0-LDRZ Rdst=Rsrc1 if z=1, otherwise Rdst=Rsrc2

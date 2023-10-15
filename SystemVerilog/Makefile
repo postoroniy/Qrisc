@@ -16,4 +16,4 @@ yosys_qrisc32_syn.v:
 	yosys -s ys
 
 clean:
-	rm -rf yosys_qrisc32_syn.v *.vcd obj_dir
+	rm -rf yosys_qrisc32_syn.v *.vcd obj_dir yosys_qrisc32*

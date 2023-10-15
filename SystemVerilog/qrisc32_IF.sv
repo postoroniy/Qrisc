@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2012  Vinogradov Viacheslav
+//    Copyright (C) 2010-2023  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -45,40 +45,31 @@ module qrisc32_IF(
     bit[31:0]   stalled_adr0;
     bit[31:0]   stalled_adr1;
 
-    always_comb
-    begin
+    always_comb begin
         pc=avm_instructions.address_r;//
 
         base_w=avm_instructions.address_r;
         offset_w=4;
         if(if_stall)
             offset_w=0;
-        else
-        if(new_address_valid)
-        begin
+        else if(new_address_valid) begin
             base_w=new_address;
             offset_w=0;
         end
     end
 
-    always@(posedge clk)// or posedge reset)
-    if(reset)
-    begin
+    always_ff@(posedge clk)
+    if(reset) begin
         avm_instructions.address_r<='0;//reset address!
         avm_instructions.rd<=1;//forever =1
         instruction<='0;//=ldr R0,R0 =nop
-    end
-    else
-    begin
-        if(~if_stall)
-        begin
+    end else begin
+        if(~if_stall) begin
             instruction<=avm_instructions.data_r;
             avm_instructions.address_r<=jump_address_w;
             stalled_adr0<=jump_address_w;
             stalled_adr1<=stalled_adr0;
-        end
-        else
-        begin
+        end else begin
             avm_instructions.address_r<=stalled_adr0;
             //instruction<='0;
             //instruction<=avm_instructions.data_r;

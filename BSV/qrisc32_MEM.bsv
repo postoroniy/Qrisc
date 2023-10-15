@@ -22,7 +22,7 @@
 `timescale 1ns / 1ns
 
 module qrisc32_MEM(
-        input logic         clk,reset,
+        input logic          clk,reset,
         avalon_port         avm_data_read,//avalon master port only for  reading data
         avalon_port         avm_data_write,//avalon master port only for  writing data
         input risc_pack::pipe_struct   pipe_mem_in,
@@ -40,8 +40,9 @@ module qrisc32_MEM(
     always_comb
         pipe_stall = rd_stall | wr_stall;
 
-    always_ff@(posedge clk)
-    if(reset) begin
+    always@(posedge clk)
+    if(reset)
+    begin
         avm_data_read.address_r<='0;
         avm_data_read.rd<='0;
         avm_data_read.wr<='0;
@@ -49,7 +50,9 @@ module qrisc32_MEM(
         pipe_mem_out<='0;
         pipe_mem_in0<='0;
         pipe_mem_in1<='0;
-    end else begin
+    end
+    else
+    begin
         if(pipe_mem_in.read_mem==1)
             avm_data_read.address_r<=addr_w;//asserted addr
 
@@ -57,8 +60,8 @@ module qrisc32_MEM(
         pipe_mem_in0<=pipe_mem_in;//addr asserted
         pipe_mem_in1<=pipe_mem_in0;//just wait cycle
 
-        if(avm_data_read.wait_req==0 && pipe_mem_in1.read_mem==1)begin
-        // it has been read ok(sram access is 2 cycles)
+        if(avm_data_read.wait_req==0 && pipe_mem_in1.read_mem==1)// it has been read ok(sram access is 2 cycles)
+        begin
             //if(~pipe_mem_in.write_reg)
             begin
                 if(verbose)
@@ -89,12 +92,16 @@ module qrisc32_MEM(
             //    pipe_mem_out<=pipe_mem_in1;
             //    pipe_mem_out.val_dst<=avm_data_read.data_r;//result of read
             //end
-        end else begin
+        end
+        else
+        begin
             rd_stall<=0;
-            //if previous op was stalled
-            if(rd_stall)begin
+            if(rd_stall)//if previous op was stalled
+            begin
                 pipe_mem_out<=pipe_mem_in0;
-            end else begin
+            end
+            else
+            begin
                 pipe_mem_out<=pipe_mem_in;
                 if(pipe_mem_in.read_mem)//if read access then
                     pipe_mem_out.write_reg<='0;//clear write bit register
@@ -102,20 +109,26 @@ module qrisc32_MEM(
         end
     end
 
-    always_ff@(posedge clk)
-    if(reset) begin
+    always@(posedge clk)
+    if(reset)
+    begin
         avm_data_write.address_r<='0;
         avm_data_write.data_w<='0;
         avm_data_write.rd<='0;
         avm_data_write.wr<='0;
         wr_stall<='0;
-    end else begin
-        if(pipe_mem_in.write_mem) begin
+    end
+    else
+    begin
+        if(pipe_mem_in.write_mem)
+        begin
             avm_data_write.address_r<=addr_w;
             avm_data_write.data_w<=pipe_mem_in.val_dst;
             avm_data_write.wr<=1;
             wr_stall<=0;
-        end else begin
+        end
+        else
+        begin
             avm_data_write.wr<='0;
             wr_stall<=0;
         end

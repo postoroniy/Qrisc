@@ -1,3 +1,24 @@
+///////////////////////////////////////////////////////////////////////////////
+//    Project Qrisc32 is risc cpu implementation, purpose is studying
+//    Digital System Design course at Kyoung Hee University during my PhD earning
+//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//
+//    This library is free software; you can redistribute it and/or
+//    modify it under the terms of the GNU Lesser General Public
+//    License as published by the Free Software Foundation; either
+//    version 2.1 of the License, or (at your option) any later version.
+//
+//    This library is distributed in the hope that it will be useful,
+//    but WITHOUT ANY WARRANTY; without even the implied warranty of
+//    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+//    Lesser General Public License for more details.
+//
+//    You should have received a copy of the GNU Lesser General Public
+//    License along with this library; if not, write to the Free Software
+//    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+//
+///////////////////////////////////////////////////////////////////////////////
+
 #include "Vqrisc32_tb.h"
 #include <memory.h>
 #include <verilated.h>
@@ -5,7 +26,8 @@
 #include "verilated_fst_c.h"
 #endif
 
-int main(int argc, char **argv, char **env) {
+int main(int argc, char **argv, char **env)
+{
   VerilatedContext *contextp = new VerilatedContext;
   contextp->commandArgs(argc, argv);
   Vqrisc32_tb *top = new Vqrisc32_tb{contextp};
@@ -22,7 +44,8 @@ int main(int argc, char **argv, char **env) {
   top->Dstop_enable = 0; //
 
   bool testing = true;
-  while (testing) {
+  while (testing)
+  {
     contextp->timeInc(1);
     top->clk = !top->clk; // clock toggle
     top->eval();
@@ -33,7 +56,8 @@ int main(int argc, char **argv, char **env) {
       continue;     // Resetting
     top->reset = 0; // Deassert reset
 
-    if (top->Istop_active) {
+    if (top->Istop_active)
+    {
       top->reset = 1; // Deassert reset
     }
     testing = !top->done;
