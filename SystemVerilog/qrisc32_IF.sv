@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -23,7 +23,7 @@
 `timescale 1ns / 1ns
 
 module qrisc32_IF(
-    input logic       clk,reset,
+    input logic       clk,areset,
     avalon_port       avm_instructions,//avalon master port only for  reading instructions
 
     input logic       pipe_stall,//feed back from MEM stage
@@ -58,8 +58,8 @@ module qrisc32_IF(
         end
     end
 
-    always_ff@(posedge clk)
-    if(reset) begin
+    always_ff@(posedge clk or posedge areset)
+    if(areset) begin
         avm_instructions.address_r<='0;//reset address!
         avm_instructions.rd<=1;//forever =1
         instruction<='0;//=ldr R0,R0 =nop

@@ -1,7 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -40,7 +40,7 @@ int main(int argc, char **argv, char **env)
   top->trace(tfp, 99); // Trace 99 levels of hierarchy
   tfp->open("qrisc32_tb.vcd");
 #endif
-  top->reset = 1;        // Assert reset
+  top->areset = 1;       // Assert reset
   top->verbose = 0;      //
   top->Istop_enable = 0; //
   top->Dstop_enable = 0; //
@@ -56,11 +56,11 @@ int main(int argc, char **argv, char **env)
 #endif
     if (contextp->time() < 8)
       continue;     // Resetting
-    top->reset = 0; // Deassert reset
+    top->areset = 0; // Deassert reset
 
     if (top->Istop_active)
     {
-      top->reset = 1; // Deassert reset
+      top->areset = 1; // Deassert reset
     }
     testing = !top->done;
   }

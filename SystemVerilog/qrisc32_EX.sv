@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -23,9 +23,9 @@
 `timescale 1ns / 1ns
 
 module qrisc32_EX(
-    input  logic                  clk,reset,pipe_stall,
-    input  risc_pack::pipe_struct pipe_ex_in,
-    output risc_pack::pipe_struct pipe_ex_out,
+    input  logic                  clk,areset,pipe_stall,
+    input  risc_pack::pipe_struct_t pipe_ex_in,
+    output risc_pack::pipe_struct_t pipe_ex_out,
 
     output bit          new_address_valid,//to mem stage
     output bit[31:0]    new_address//to mem stage
@@ -39,7 +39,7 @@ module qrisc32_EX(
 
     wire[32:0]  summ_result = pipe_ex_in.val_r1 + pipe_ex_in.val_r2;
 
-    risc_pack::pipe_struct pipe_ex_out_w;
+    risc_pack::pipe_struct_t pipe_ex_out_w;
 
     always_comb begin
         pipe_ex_out_w=pipe_ex_in;

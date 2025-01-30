@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -23,22 +23,22 @@
 `timescale 1ns / 1ns
 
 module qrisc32_ID(
-        input logic         clk,reset,
+        input logic         clk,areset,
         input logic[31:0]   instruction,
         input logic[31:0]   pc,
 
         input logic         pipe_stall,//feed back from MEM stage
-        input risc_pack::pipe_struct   pipe_wb_mem,//for memory read
-        input risc_pack::pipe_struct   pipe_wb_ex,//for R2 register and ALU operations only
+        input risc_pack::pipe_struct_t   pipe_wb_mem,//for memory read
+        input risc_pack::pipe_struct_t   pipe_wb_ex,//for R2 register and ALU operations only
 
-        output risc_pack::pipe_struct  pipe_id_out,
+        output risc_pack::pipe_struct_t  pipe_id_out,
         input logic               verbose
     );
 
 
-    bit[31:0]       rf[31:0];//32 regs width is 32
+    bit[31:0]       rf[31];//32 regs width is 32
     bit[31:0]       offset_w;
-    risc_pack::pipe_struct     pipe_id_out_w;
+    risc_pack::pipe_struct_t     pipe_id_out_w;
     bit[31:0]       nop_counter;
     bit[31:0]       jmp_counter;
     bit[31:0]       alu_counter;
@@ -104,7 +104,7 @@ module qrisc32_ID(
 
         offset_w = (instruction[25])?pipe_id_out_w.val_r2:{{17{instruction[24]}},instruction[24:10]};//17 bit sign + 15 bit offset
 
-        case(instruction[24:22])
+        unique case(instruction[24:22])
             0:begin pipe_id_out_w.incr_r2=4'd0;pipe_id_out_w.incr_r2_enable= 0;end
             1:pipe_id_out_w.incr_r2=4'd1;
             2:pipe_id_out_w.incr_r2=4'd2;
@@ -118,7 +118,7 @@ module qrisc32_ID(
         case(instruction[31:28])
             //load and store
             risc_pack::LDR:
-            case(instruction[27:26])
+            unique case(instruction[27:26])
                 2'b00: begin
                         pipe_id_out_w.write_reg = (pipe_id_out_w.dst_r!=pipe_id_out_w.src_r1)?1:0;//write from reg src1 to reg dst
                         //pipe_id_out_w.incr_r2_enable    = pipe_id_out_w.write_reg;
@@ -154,7 +154,7 @@ module qrisc32_ID(
 
             //jumps
             risc_pack::JMPUNC:
-            case(instruction[27:26])
+            unique case(instruction[27:26])
                 2'b00: begin
                     pipe_id_out_w.val_r1        = instruction[25:0];
                     pipe_id_out_w.val_r2        = '0;//no offset
@@ -187,7 +187,7 @@ module qrisc32_ID(
             endcase
 
             risc_pack::JMPF:
-            case(instruction[27:26])
+            unique case(instruction[27:26])
                 2'b00:begin
                 //jmpz
                     pipe_id_out_w.val_r1        = pc;
@@ -220,7 +220,7 @@ module qrisc32_ID(
 
             //Arithmetic
             risc_pack::ALU:
-            case(instruction[27:25])
+            unique case(instruction[27:25])
                 3'd0: begin
                     pipe_id_out_w.write_reg = 1;
                     pipe_id_out_w.and_op    = 1;
@@ -249,15 +249,14 @@ module qrisc32_ID(
                     pipe_id_out_w.write_reg = 1;
                     pipe_id_out_w.shr_op    = 1;
                 end
-                //cmp_op =7
-                default: begin
+                3'd7:begin
                     //pipe_id_out_w.write_reg    = 0;
                     pipe_id_out_w.cmp_op    = 1;
                 end
             endcase
 
             risc_pack::LDRF:
-            case(instruction[27:26])
+            unique case(instruction[27:26])
                 2'b00:begin
                 //ldrz
                     pipe_id_out_w.jmpz      = 1;
@@ -290,8 +289,8 @@ module qrisc32_ID(
         endcase
     end
 
-    always_ff@(posedge clk)
-    if(reset)begin
+    always_ff@(posedge clk or posedge areset)
+    if(areset)begin
         pipe_id_out<='0;
         for(int i=0;i<32;i++)
              rf[i]<='0;
@@ -330,7 +329,7 @@ module qrisc32_ID(
                 case(instruction[31:28])
                     //load and store
                     risc_pack::LDR:
-                    case(instruction[27:26])
+                    unique case(instruction[27:26])
                         2'b00:$display("LDR R%0d, R%0d, R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                         2'b01:$display("LDRH R%0d,0x%x",pipe_id_out_w.dst_r,instruction[20:5]);
                         2'b10:$display("LDRL R%0d,0x%x",pipe_id_out_w.dst_r,instruction[20:5]);
@@ -344,7 +343,7 @@ module qrisc32_ID(
 
                     //jumps
                     risc_pack::JMPUNC:
-                    case(instruction[27:26])
+                    unique case(instruction[27:26])
                         2'b00:$display("JMP 0x%0x",instruction[25:0]);
                         2'b01://relative jump
                         $display("JMPR PC 0x%0x + offset %0d",pc,$signed(offset_w));
@@ -355,7 +354,7 @@ module qrisc32_ID(
                     endcase
 
                     risc_pack::JMPF:
-                    case(instruction[27:26])
+                    unique case(instruction[27:26])
                         2'b00://jmpz
                             $display("JMPZ PC 0x%0x + offset %0d",pc,$signed(offset_w));
                         2'b01://jmpnz
@@ -368,7 +367,7 @@ module qrisc32_ID(
 
                     //Arithmetic
                     risc_pack::ALU:
-                    case(instruction[27:25])
+                    unique case(instruction[27:25])
                         3'd0:$display("AND R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                         3'd1:$display("OR  R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                         3'd2:$display("XOR R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
@@ -376,11 +375,11 @@ module qrisc32_ID(
                         3'd4:$display("MUL R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                         3'd5:$display("SHL R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                         3'd6:$display("SHR R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        default:$display("CMP R%0d with R%0d+%d",pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                        3'd7:$display("CMP R%0d with R%0d+%d",pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                     endcase
 
                     risc_pack::LDRF:
-                    case(instruction[27:26])
+                    unique case(instruction[27:26])
                         2'b00://ldrz
                             $display("LDRZ R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                         2'b01://ldrnz
@@ -392,7 +391,7 @@ module qrisc32_ID(
                     endcase
 
                     default:
-                        if(!reset)
+                        if(!areset)
                         begin
                             $display("Unknown Command %x",instruction[31:28]);
                         end

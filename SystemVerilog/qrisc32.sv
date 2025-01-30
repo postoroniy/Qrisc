@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -41,7 +41,7 @@ endinterface
 
 
 module qrisc32(
-    input logic         clk,reset,
+    input logic         clk,areset,
 
     //avalon master port only for  reading instructions
     input  logic[31:0] avm_instructions_data,
@@ -85,7 +85,7 @@ module qrisc32(
     assign  avm_dataw_wr                = avm_data_write.wr;
     assign  avm_data_write.wait_req     = avm_dataw_wait_req;
 
-    risc_pack::pipe_struct
+    risc_pack::pipe_struct_t
                 pipe_id_out,//I decode
                 pipe_ex_out,//Ex
                 pipe_mem_out;//MEM access
@@ -101,7 +101,7 @@ module qrisc32(
 
     qrisc32_IF  qrisc32_IF(
         .clk(clk),
-        .reset(reset),
+        .areset(areset),
         .pipe_stall(pipe_stall),
         .avm_instructions(avm_instructions),
         .new_address_valid(new_address_valid_ex),
@@ -113,7 +113,7 @@ module qrisc32(
 
     qrisc32_ID  qrisc32_ID(
         .clk(clk),
-        .reset(reset),
+        .areset(areset),
         .pipe_stall(pipe_stall),
         .instruction(instruction),
         .pc(pc),
@@ -125,7 +125,7 @@ module qrisc32(
 
     qrisc32_EX  qrisc32_EX(
         .clk(clk),
-        .reset(reset),
+        .areset(areset),
         .pipe_stall(pipe_stall),
         .pipe_ex_in(pipe_id_out),
         .pipe_ex_out(pipe_ex_out),
@@ -135,7 +135,7 @@ module qrisc32(
 
     qrisc32_MEM qrisc32_MEM(
         .clk(clk),
-        .reset(reset),
+        .areset(areset),
         .pipe_mem_in(pipe_ex_out),
         .avm_data_read(avm_data_read),
         .avm_data_write(avm_data_write),

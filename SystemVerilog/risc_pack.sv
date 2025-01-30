@@ -67,7 +67,7 @@ package risc_pack;
         bit             jmpnz;
         bit             jmpc;
         bit             jmpnc;
-    }pipe_struct;
+    } pipe_struct_t;
 
 //operations
 parameter[3:0]

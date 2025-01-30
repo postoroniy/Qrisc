@@ -1,7 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -22,11 +22,11 @@
 `timescale 1ns / 1ns
 
 module qrisc32_MEM(
-        input logic         clk,reset,
+        input logic         clk,areset,
         avalon_port         avm_data_read,//avalon master port only for  reading data
         avalon_port         avm_data_write,//avalon master port only for  writing data
-        input risc_pack::pipe_struct   pipe_mem_in,
-        output risc_pack::pipe_struct  pipe_mem_out,
+        input risc_pack::pipe_struct_t   pipe_mem_in,
+        output risc_pack::pipe_struct_t  pipe_mem_out,
         output bit          pipe_stall,
         input logic         verbose
     );
@@ -35,13 +35,13 @@ module qrisc32_MEM(
     bit         wr_stall;
     wire[31:0]  addr_w = pipe_mem_in.val_r1;
 
-    risc_pack::pipe_struct pipe_mem_in0,pipe_mem_in1;
+    risc_pack::pipe_struct_t pipe_mem_in0,pipe_mem_in1;
 
     always_comb
         pipe_stall = rd_stall | wr_stall;
 
-    always_ff@(posedge clk)
-    if(reset) begin
+    always_ff@(posedge clk or posedge areset)
+    if(areset) begin
         avm_data_read.address_r<='0;
         avm_data_read.rd<='0;
         avm_data_read.wr<='0;
@@ -102,8 +102,8 @@ module qrisc32_MEM(
         end
     end
 
-    always_ff@(posedge clk)
-    if(reset) begin
+    always_ff@(posedge clk or posedge areset)
+    if(areset) begin
         avm_data_write.address_r<='0;
         avm_data_write.data_w<='0;
         avm_data_write.rd<='0;

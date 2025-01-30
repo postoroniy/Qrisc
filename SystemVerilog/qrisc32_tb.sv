@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -22,7 +22,7 @@
 `timescale 1ns / 1ns
 
 module qrisc32_tb(
-  input   logic   clk,reset,
+  input   logic   clk,areset,
   output  logic   Istop_active,Dstop_active,
   input   bit     Istop_enable,Dstop_enable,
   input   bit     verbose,
@@ -87,7 +87,7 @@ import risc_pack::*;
 
     // Unit Under Test port map
     qrisc32 UUT(
-        .reset(reset),
+        .areset(areset),
         .clk(clk),
         //avalon master port only for  reading instructions
         .avm_instructions_data(idata),
@@ -504,14 +504,14 @@ import risc_pack::*;
 
     always @ (posedge clk)
     begin
-      reset_d<=reset;
+      reset_d<=areset;
       Istop_active_d<=Istop_active;
       if(Istop_active && ~Istop_active_d)begin
         $display("Sort finished");
         $display("Cycles for sorting -->%0d<--",cycles);
       end
 
-      if(reset && ~reset_d)
+      if(areset && !reset_d)
         case(algorithm)
           bubble : begin
               load_unsorted_data(data_kind);
@@ -570,9 +570,9 @@ import risc_pack::*;
           end_of_alg : done<=1;
         endcase
 
-      if(reset && ~reset_d)
+      if(areset && !reset_d)
         cycles<=0;
-      else if(~reset)
+      else if(!areset)
         cycles <= cycles + 1;
     end
 endmodule
