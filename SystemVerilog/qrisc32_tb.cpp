@@ -23,7 +23,8 @@
 #include <memory.h>
 #include <verilated.h>
 #if VM_TRACE
-#include "verilated_fst_c.h"
+// #include "verilated_fst_c.h"
+#include "verilated_vcd_c.h"
 #endif
 
 int main(int argc, char **argv, char **env)
@@ -34,7 +35,8 @@ int main(int argc, char **argv, char **env)
 
 #if VM_TRACE
   Verilated::traceEverOn(true);
-  VerilatedFstC *tfp = new VerilatedFstC;
+  // VerilatedFstC *tfp = new VerilatedFstC;
+  VerilatedVcdC *tfp = new VerilatedVcdC;
   top->trace(tfp, 99); // Trace 99 levels of hierarchy
   tfp->open("qrisc32_tb.vcd");
 #endif

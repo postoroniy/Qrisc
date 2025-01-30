@@ -1,7 +1,8 @@
 
 SRC=mem.sv risc_pack.sv qrisc32_EX.sv qrisc32_ID.sv qrisc32_IF.sv qrisc32_MEM.sv qrisc32.sv qrisc32_tb.sv
 
-VERILATOR_CFLAGS ?= -Os -x-assign 0 --trace --trace-fst -Wno-fatal -Wno-lint -Wno-UNOPTFLAT
+VERILATOR_CFLAGS ?= -O0 -x-assign 0 --trace -Wno-fatal -Wno-lint -Wno-UNOPTFLAT
+# --trace-fst
 VERILATOR_THREADS ?=2
 
 all: qrisc32_tb.vcd yosys_qrisc32_syn.v
