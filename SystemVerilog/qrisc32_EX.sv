@@ -27,21 +27,25 @@ module qrisc32_EX(
     input  risc_pack::pipe_struct_t pipe_ex_in,
     output risc_pack::pipe_struct_t pipe_ex_out,
 
-    output bit          new_address_valid,//to mem stage
-    output bit[31:0]    new_address//to mem stage
+    output logic          new_address_valid,//to mem stage
+    output logic[31:0]    new_address//to mem stage
     );
 
-    bit     flagZ_w, flagC_w;
-    bit     flagZ, flagC;
-    wire signed[31:0]   r2      = pipe_ex_in.val_r2;
-    wire signed[3:0]    inc_r2  = pipe_ex_in.incr_r2;
-    wire signed[31:0]   r2_add  = r2 + inc_r2;
-
-    wire[32:0]  summ_result = pipe_ex_in.val_r1 + pipe_ex_in.val_r2;
+    logic   flagZ_w, flagC_w;
+    logic   flagZ, flagC;
+    logic signed[31:0]   r2;
+    logic signed[3:0]    inc_r2;
+    logic signed[31:0]   r2_add;
+    logic[32:0]  summ_result;
 
     risc_pack::pipe_struct_t pipe_ex_out_w;
 
     always_comb begin
+        r2      = pipe_ex_in.val_r2;
+        inc_r2  = pipe_ex_in.incr_r2;
+        r2_add  = r2 + inc_r2;
+        summ_result = pipe_ex_in.val_r1 + pipe_ex_in.val_r2;
+        //
         pipe_ex_out_w=pipe_ex_in;
         flagZ_w=0;
         flagC_w=0;
@@ -90,7 +94,10 @@ module qrisc32_EX(
         pipe_ex_out_w.val_r2 = (pipe_ex_out_w.incr_r2_enable)?r2_add:pipe_ex_out_w.val_r2;
     end
 
-    always_ff @(posedge clk) begin
+    always_ff@(posedge clk or posedge areset)
+    if(areset)begin
+        {flagZ,flagC,new_address_valid,new_address,pipe_ex_out}<='0;
+    end else begin
         flagZ<=
         (pipe_ex_in.and_op | pipe_ex_in.or_op | pipe_ex_in.xor_op | pipe_ex_in.add_op
         | pipe_ex_in.mul_op | pipe_ex_in.shl_op | pipe_ex_in.shr_op | pipe_ex_in.cmp_op)?flagZ_w:flagZ;

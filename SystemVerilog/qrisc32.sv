@@ -90,14 +90,14 @@ module qrisc32(
                 pipe_ex_out,//Ex
                 pipe_mem_out;//MEM access
 
-    wire[31:0]  instruction,pc;
-    wire        new_address_valid_ex;
-    wire[31:0]  new_address_ex;
+    logic[31:0]  instruction,pc;
+    logic        new_address_valid_ex;
+    logic[31:0]  new_address_ex;
 
-    wire        new_address_valid_mem;
-    wire[31:0]  new_address_mem;
+    logic        new_address_valid_mem;
+    logic[31:0]  new_address_mem;
 
-    wire        pipe_stall;
+    logic        pipe_stall;
 
     qrisc32_IF  qrisc32_IF(
         .clk(clk),

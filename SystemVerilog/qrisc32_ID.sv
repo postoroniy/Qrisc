@@ -35,14 +35,13 @@ module qrisc32_ID(
         input logic               verbose
     );
 
-
-    bit[31:0]       rf[31];//32 regs width is 32
-    bit[31:0]       offset_w;
     risc_pack::pipe_struct_t     pipe_id_out_w;
-    bit[31:0]       nop_counter;
-    bit[31:0]       jmp_counter;
-    bit[31:0]       alu_counter;
-    bit[31:0]       oth_counter;
+    logic[31:0]       rf[32];//32 regs width is 32
+    logic[31:0]       offset_w;
+    logic[31:0]       nop_counter;
+    logic[31:0]       jmp_counter;
+    logic[31:0]       alu_counter;
+    logic[31:0]       oth_counter;
 
     //comb part
     always_comb begin

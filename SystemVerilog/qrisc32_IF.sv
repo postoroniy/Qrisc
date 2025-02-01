@@ -31,23 +31,21 @@ module qrisc32_IF(
     input logic       new_address_valid,//feed back from  EX stage
     input logic[31:0] new_address,//feed back from  EX stage
 
-    output bit[31:0]  instruction,
-    output bit[31:0]  pc
+    output logic[31:0]  instruction,
+    output logic[31:0]  pc
     );
 
-
-    bit[2:0]    offset_w;//
-    bit[31:0]   base_w;//
-    wire[31:0]  jump_address_w = base_w+offset_w;
-
-    wire        if_stall       = avm_instructions.wait_req | pipe_stall;
-
-    bit[31:0]   stalled_adr0;
-    bit[31:0]   stalled_adr1;
+    logic[2:0]  offset_w;//
+    logic[31:0] base_w;//
+    logic[31:0] jump_address_w;
+    logic       if_stall;
+    logic[31:0] stalled_adr0;
+    logic[31:0] stalled_adr1;
 
     always_comb begin
-        pc=avm_instructions.address_r;//
-
+        jump_address_w = base_w+offset_w;
+        if_stall       = avm_instructions.wait_req | pipe_stall;
+        pc=avm_instructions.address_r;
         base_w=avm_instructions.address_r;
         offset_w=4;
         if(if_stall)
@@ -63,6 +61,7 @@ module qrisc32_IF(
         avm_instructions.address_r<='0;//reset address!
         avm_instructions.rd<=1;//forever =1
         instruction<='0;//=ldr R0,R0 =nop
+        {stalled_adr0,stalled_adr1}<='0;
     end else begin
         if(~if_stall) begin
             instruction<=avm_instructions.data_r;

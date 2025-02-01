@@ -27,18 +27,20 @@ module qrisc32_MEM(
         avalon_port         avm_data_write,//avalon master port only for  writing data
         input risc_pack::pipe_struct_t   pipe_mem_in,
         output risc_pack::pipe_struct_t  pipe_mem_out,
-        output bit          pipe_stall,
+        output logic        pipe_stall,
         input logic         verbose
     );
 
-    bit         rd_stall;
-    bit         wr_stall;
-    wire[31:0]  addr_w = pipe_mem_in.val_r1;
-
     risc_pack::pipe_struct_t pipe_mem_in0,pipe_mem_in1;
 
-    always_comb
+    logic       rd_stall;
+    logic       wr_stall;
+    logic[31:0] addr_w;
+
+    always_comb begin
+        addr_w = pipe_mem_in.val_r1;
         pipe_stall = rd_stall | wr_stall;
+    end
 
     always_ff@(posedge clk or posedge areset)
     if(areset) begin

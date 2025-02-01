@@ -24,49 +24,49 @@
 
 package risc_pack;
     typedef struct packed{
-        bit[31:0]       val_r1;//value of register src1
-        bit[31:0]       val_r2;//value of register src2
-        bit[31:0]       val_dst;//value of register dst
+        logic[31:0]       val_r1;//value of register src1
+        logic[31:0]       val_r2;//value of register src2
+        logic[31:0]       val_dst;//value of register dst
 
-        bit[4:0]        src_r2;//indicate number of src2 register
-        bit[4:0]        src_r1;//indicate number of src1 register
-        bit[4:0]        dst_r;//indicate number of dest register
+        logic[4:0]        src_r2;//indicate number of src2 register
+        logic[4:0]        src_r1;//indicate number of src1 register
+        logic[4:0]        dst_r;//indicate number of dest register
 
         //add to src2
-        bit[3:0]        incr_r2;//0 +1 or -1, +2,-2, +4, -4
-        bit             incr_r2_enable;//
+        logic[3:0]        incr_r2;//0 +1 or -1, +2,-2, +4, -4
+        logic             incr_r2_enable;//
 
         //
-        bit             write_reg;//indicate write to RF(addres in dst_r, value in dst_v)
+        logic             write_reg;//indicate write to RF(addres in dst_r, value in dst_v)
         //load store operations, if both bit is zero then bypass MEM stage
-        bit             read_mem;//indicate read from memory(addres in src1+src2)
-        bit             write_mem;//indicate write to memory(addres in src1+src2, value in dst)
+        logic             read_mem;//indicate read from memory(addres in src1+src2)
+        logic             write_mem;//indicate write to memory(addres in src1+src2, value in dst)
         //
 
         //if alu and shift operations are  zeros then bypass EX stage
         //alu operations
-        bit             and_op;//AND
-        bit             or_op;// OR
-        bit             xor_op;//XOR
-        bit             add_op;//+
-        bit             mul_op;//
-        bit             cmp_op;//compare operation
+        logic             and_op;//AND
+        logic             or_op;// OR
+        logic             xor_op;//XOR
+        logic             add_op;//+
+        logic             mul_op;//
+        logic             cmp_op;//compare operation
 
-        bit             ldrf_op;//conditional load
+        logic             ldrf_op;//conditional load
         //shifter operations
-        bit             shl_op;//shift left
-        bit             shr_op;//shift  right
+        logic             shl_op;//shift left
+        logic             shr_op;//shift  right
         //jmp operations
         //old pc in  value in    val_r1
         //offset to  pc  value in    val_r2
         //new pc value in    val_dst
         //types of jump
         //indicate to calc new address of PC
-        bit             jmpunc;
-        bit             jmpz;
-        bit             jmpnz;
-        bit             jmpc;
-        bit             jmpnc;
+        logic             jmpunc;
+        logic             jmpz;
+        logic             jmpnz;
+        logic             jmpc;
+        logic             jmpnc;
     } pipe_struct_t;
 
 //operations

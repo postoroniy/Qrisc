@@ -35,7 +35,7 @@ module mem
     ,input  logic       verbose
     );
 
-    bit[31:0] sram[size-1:0];
+    bit[31:0] sram[size];
 
     assign    req        =    1'b0;
     wire[$bits(size)-1:0]add_r_word =add_r[31:2];
