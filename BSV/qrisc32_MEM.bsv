@@ -1,7 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -18,121 +18,73 @@
 //    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 //
 ///////////////////////////////////////////////////////////////////////////////
-`default_nettype none
-`timescale 1ns / 1ns
+import AXI4_Types :: *;
+import FIFOF :: *;
+import Vector :: *;
+import Semi_FIFOF::*;
 
-module qrisc32_MEM(
-        input logic          clk,reset,
-        avalon_port         avm_data_read,//avalon master port only for  reading data
-        avalon_port         avm_data_write,//avalon master port only for  writing data
-        input risc_pack::pipe_struct   pipe_mem_in,
-        output risc_pack::pipe_struct  pipe_mem_out,
-        output bit          pipe_stall,
-        input logic         verbose
+import Qrisc_pack::*;
+
+module qrisc32_MEM#(
+  numeric wd_id,
+  numeric wd_addr,
+  numeric wd_data,
+  numeric wd_user,
+  FIFOF#(Pipe_s) exeFifo)
+  (MEM_ifc#(wd_id, wd_addr, wd_data, wd_user))
+  provisos (
+    Bits#(Bit#(32), wd_data),
+    Bits#(Bit#(32), wd_addr)
     );
 
-    bit         rd_stall;
-    bit         wr_stall;
-    wire[31:0]  addr_w = pipe_mem_in.val_r1;
+    AXI4_Master_Xactor_IFC#(wd_id, wd_addr, wd_data, wd_user) master_data_if <- mkAXI4_Master_Xactor_2;
 
-    risc_pack::pipe_struct pipe_mem_in0,pipe_mem_in1;
+    rule memIO(exeFifo.notEmpty);
+        let pipe_mem_in = exeFifo.first;
+        exeFifo.deq;
 
-    always_comb
-        pipe_stall = rd_stall | wr_stall;
+        if(pipe_mem_in.read_mem) begin
+            let request = AXI4_Rd_Addr {
+                arid: 0,
+                araddr: pack(pipe_mem_in.val_r1),
+                arlen: 4,
+                arsize: 2,
+                arburst: axburst_incr,
+                arlock: 0,
+                arcache: 0,
+                arprot: 0,
+                arqos: 0,
+                arregion: 0,
+                aruser: 0
+            };
+            master_data_if.i_rd_addr.enq(request);
 
-    always@(posedge clk)
-    if(reset)
-    begin
-        avm_data_read.address_r<='0;
-        avm_data_read.rd<='0;
-        avm_data_read.wr<='0;
-        rd_stall<=0;
-        pipe_mem_out<='0;
-        pipe_mem_in0<='0;
-        pipe_mem_in1<='0;
-    end
-    else
-    begin
-        if(pipe_mem_in.read_mem==1)
-            avm_data_read.address_r<=addr_w;//asserted addr
-
-        avm_data_read.rd<=pipe_mem_in.read_mem;//||pipe_mem_in0.read_mem||pipe_mem_in1.read_mem;
-        pipe_mem_in0<=pipe_mem_in;//addr asserted
-        pipe_mem_in1<=pipe_mem_in0;//just wait cycle
-
-        if(avm_data_read.wait_req==0 && pipe_mem_in1.read_mem==1)// it has been read ok(sram access is 2 cycles)
-        begin
-            //if(~pipe_mem_in.write_reg)
-            begin
-                if(verbose)
-                    $display("[MEM stage] access to dst register");
-                rd_stall<=0;
-                pipe_mem_out<=pipe_mem_in;
-                pipe_mem_out.dst_r<=pipe_mem_in1.dst_r;
-                pipe_mem_out.val_dst<=avm_data_read.data_r;//result of read
-                pipe_mem_out.write_reg<=1;
-            end
-            //else
-            //if(~pipe_mem_in.incr_r2_enable)
-            //begin
-            //    if(verbose)
-            //        $display("[MEM stage] access to src2 register");
-            //    rd_stall<=0;
-            //    pipe_mem_out<=pipe_mem_in;
-            //
-            //    pipe_mem_out.src_r2<=pipe_mem_in1.dst_r;
-            //    pipe_mem_out.incr_r2_enable<=1;
-            //    pipe_mem_out.val_r2<=avm_data_read.data_r;//result of read
-            //end
-            //else
-            //begin
-            //    if(verbose)
-            //        $display("[MEM stage] access to dst register and STALL pipeline!");
-            //    rd_stall<=1;
-            //    pipe_mem_out<=pipe_mem_in1;
-            //    pipe_mem_out.val_dst<=avm_data_read.data_r;//result of read
-            //end
+            let data = master_data_if.o_rd_data.first;
+            pipe_mem_in.val_dst = unpack(data.rdata);
+            pipe_mem_in.write_reg = True;
         end
-        else
-        begin
-            rd_stall<=0;
-            if(rd_stall)//if previous op was stalled
-            begin
-                pipe_mem_out<=pipe_mem_in0;
-            end
-            else
-            begin
-                pipe_mem_out<=pipe_mem_in;
-                if(pipe_mem_in.read_mem)//if read access then
-                    pipe_mem_out.write_reg<='0;//clear write bit register
-            end
-        end
-    end
+        else begin
+            let write_addr = AXI4_Wr_Addr {
+                awid: 0,
+                awaddr: pack(pipe_mem_in.val_r1),
+                awlen: 4,
+                awsize: 2,
+                awburst: axburst_incr,
+                awlock: 0,
+                awcache: 0,
+                awprot: 0,
+                awqos: 0,
+                awregion: 0,
+                awuser: 0
+            };
+            master_data_if.i_wr_addr.enq(write_addr);
 
-    always@(posedge clk)
-    if(reset)
-    begin
-        avm_data_write.address_r<='0;
-        avm_data_write.data_w<='0;
-        avm_data_write.rd<='0;
-        avm_data_write.wr<='0;
-        wr_stall<='0;
-    end
-    else
-    begin
-        if(pipe_mem_in.write_mem)
-        begin
-            avm_data_write.address_r<=addr_w;
-            avm_data_write.data_w<=pipe_mem_in.val_dst;
-            avm_data_write.wr<=1;
-            wr_stall<=0;
+            let write_data = AXI4_Wr_Data {
+                wdata   :  pack(pipe_mem_in.val_dst),
+                wuser   : 0
+            };            
+            master_data_if.i_wr_data.enq(write_data);
         end
-        else
-        begin
-            avm_data_write.wr<='0;
-            wr_stall<=0;
-        end
-    end
+    endrule
+    interface axi_data = master_data_if.axi_side;
 endmodule
-
-`default_nettype wire

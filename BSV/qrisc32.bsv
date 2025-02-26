@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -24,77 +24,41 @@
 // Design      : qrisc32
 // Author      : vinogradov@opencores.org
 //4 stages risc cpu
-//with 3 avalon interfaces:
-// - Data Read Avalon interface
-// - Data Write Avalon interface
-// - Instruction Read Avalon interface
+//with 2 AXI4 interfaces:
+// - Instruction Read AXI4 interface
+// - Data Read/Write AXI4 interface
 //--------------------------------------------------------------------------------------------
+import AXI4_Types :: *;
+import FIFOF :: *;
+import Vector :: *;
+import Semi_FIFOF::*;
+
 import Qrisc_pack::*;
 import qrisc32_IF::*;
 import qrisc32_ID::*;
-// import qrisc32_EX::*;
-// import qrisc32_MEM::*;
+import qrisc32_EX::*;
+import qrisc32_MEM::*;
 
-module qrisc32(Qrisc32Ifc);
-    // input  logic       verbose//for simulation
-    // Wire#(Bool) test     <- mkBypassWire(b.verbose);
+module qrisc32(Qrisc_if #(1, 32,32, 1));
 
-    // PipeIfc   pipe_id_out,//I decode
-    //             pipe_ex_out,//Ex
-    //             pipe_mem_out;//MEM access
-    //
-    // wire[31:0]  instruction,pc;
-    // wire        new_address_valid_ex;
-    // wire[31:0]  new_address_ex;
-    //
-    // wire        new_address_valid_mem;
-    // wire[31:0]  new_address_mem;
-    //
-    // wire        pipe_stall;
-    //
-    // let qIf_mod <- qrisc32_IF;
-    IF_ifc qIF  <- qrisc32_IF;
-    ID_ifc qID  <- qrisc32_ID;
+    FIFOF#(Instruction) instructionFifo <- mkFIFOF;
+    IF_ifc#(1, 32, 32, 1) instructionFetchStage <- qrisc32_IF(1, 32, 32, 1, instructionFifo);
 
-    interface avm_instructions = qIF.avm_instructions;
+    FIFOF#(Pipe_s) decodeFifo <- mkFIFOF;
+    ID_ifc instructionDecodeStage <- qrisc32_ID(instructionFifo, decodeFifo);
 
+// wb_ex_in
 
-    // interface ifo = qIF.ifo;
+    FIFOF#(Pipe_s) exeFifo <- mkFIFOF;
+    EX_ifc instructionExecuteStage <- qrisc32_EX(decodeFifo,exeFifo);
 
-    //     .pipe_stall(pipe_stall),
-    //     .avm_instructions(avm_instructions),
-    //     .new_address_valid(new_address_valid_ex),
-    //     .new_address(new_address_ex),
-    //
-    //     .instruction(instruction),
-    //     .pc(pc)
-    // );
-    //
-    // qrisc32_ID  qrisc32_ID(
-    //     .pipe_stall(pipe_stall),
-    //     .instruction(instruction),
-    //     .pc(pc),
-    //     .pipe_wb_mem(pipe_mem_out),//for memory read
-    //     .pipe_wb_ex(pipe_ex_out),//for R2 register and ALU operations only
-    //     .pipe_id_out(pipe_id_out),
-    //     .verbose(verbose)
-    // );
-    //
-    // qrisc32_EX  qrisc32_EX(
-    //     .pipe_stall(pipe_stall),
-    //     .pipe_ex_in(pipe_id_out),
-    //     .pipe_ex_out(pipe_ex_out),
-    //     .new_address_valid(new_address_valid_ex),
-    //     .new_address(new_address_ex)
-    // );
-    //
-    // qrisc32_MEM qrisc32_MEM(
-    //     .pipe_mem_in(pipe_ex_out),
-    //     .avm_data_read(avm_data_read),
-    //     .avm_data_write(avm_data_write),
-    //     .pipe_mem_out(pipe_mem_out),
-    //     .pipe_stall(pipe_stall),
-    //     .verbose(verbose)
-    // );
+    MEM_ifc#(1, 32, 32, 1) memStage <- qrisc32_MEM(1, 32, 32, 1,exeFifo);
 
+    rule update_address;
+        let new_address <- instructionExecuteStage.get_new_address();
+        instructionFetchStage.set_new_address(new_address);
+    endrule
+
+    interface axi_data = memStage.axi_data;
+    interface axi_instruction  =  instructionFetchStage.axi_instruction;
 endmodule

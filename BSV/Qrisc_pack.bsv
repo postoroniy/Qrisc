@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -22,53 +22,109 @@
 
 package Qrisc_pack;
 
-(* always_ready, always_enabled *)
-interface AvalonMasterReadIfc;
-  (* prefix = "" *)
-  method Action get_data(Bit#(32) data);
-  (* prefix = "" *)
-  method Action check_wait(Bool wait_req);
-  method Bit#(32) addr();
-  method Bool rd;
+import AXI4_Types :: *;
+import FIFOF :: *;
+import Vector :: *;
+import Semi_FIFOF::*;
+
+interface Qrisc_if #(numeric type wd_id,
+                    numeric type wd_addr,
+                    numeric type wd_data,
+                    numeric type wd_user);
+    interface AXI4_Master_IFC #(wd_id, wd_addr, wd_data, wd_user)  axi_instruction;
+    interface AXI4_Master_IFC #(wd_id, wd_addr, wd_data, wd_user)  axi_data;
 endinterface
 
-(* always_ready, always_enabled *)
-interface AvalonMasterWriteIfc;
-  (* prefix = "" *)
-  method Action check_wait(Bool wait_req);
-  method Bit#(32) addr();
-  method Bit#(32) data();
-  method Bool wr;
-endinterface
+//Op Codes
+//[31:28]
+typedef enum { 
+    LDR     = 4'd0,
+    STR     = 4'd1,
+    JMPUNC  = 4'd2,
+    JMPF    = 4'd3,
+    ALU     = 4'd4,
+    LDRF    = 4'd5,
+    Unknown = 4'd15
+} Iset deriving (Bits, Eq, FShow, DefaultValue);
 
-(* always_ready, always_enabled *)
-interface Qrisc32Ifc;
-  (* prefix = "avm_instructions" *)
-  interface AvalonMasterReadIfc avm_instructions;
-  (* prefix = "avm_datar" *)
-  interface AvalonMasterReadIfc avm_data_read   ;
-  (* prefix = "avm_dataw" *)
-  interface AvalonMasterWriteIfc avm_data_write ;
-  (* prefix = "" *)
-  method Action verbose(Bool verbose);
-endinterface
+//[27:26]
+typedef enum { 
+    Mov         = 2'd0,
+    Ldrh        = 2'd1,
+    Ldrl        = 2'd2,
+    Ldr_Offset  = 2'd3
+} LdrType deriving (Bits, Eq, FShow, DefaultValue);
+
+//[27:26]
+typedef enum {
+    Jmp    = 2'd0,
+    Jmpr   = 2'd1,
+    Callr  = 2'd2,
+    Ret    = 2'd3
+} JmpUncType deriving (Bits, Eq, FShow, DefaultValue);
+
+//[27:26]
+typedef enum { 
+    Jmpz    = 2'd0,
+    Jmpnz   = 2'd1,
+    Jmpc    = 2'd2,
+    Jmpnc   = 2'd3
+} JmpConType deriving (Bits, Eq, FShow, DefaultValue);
+
+//[27:26]
+typedef enum { 
+    Ldrz    = 2'd0,
+    Ldrnz   = 2'd1,
+    Ldrc    = 2'd2,
+    Ldrnc   = 2'd3
+} LdrfType deriving (Bits, Eq, FShow, DefaultValue);
+
+//[27:25]
+typedef enum { 
+    And    = 3'd0,
+    Or     = 3'd1,
+    Xor    = 3'd2,
+    Add    = 3'd3,
+    Mul    = 3'd4,
+    Shl    = 3'd5,
+    Shr    = 3'd6,
+    Cmp    = 3'd7
+} AluType deriving (Bits, Eq, FShow, DefaultValue);
+
+//[25]
+typedef enum { 
+    OffsetCode = 1'd0,
+    OffsetR    = 1'd1
+} OffsetType deriving (Bits, Eq, FShow, DefaultValue);
+
+//[24:22]
+typedef enum { 
+    NoChanges0  = 3'd0,
+    Incr1       = 3'd1,
+    Incr2       = 3'd2,
+    Incr4       = 3'd3,
+    NoChanges1  = 3'd4,
+    Decr1       = 3'd5,
+    Decr2       = 3'd6,
+    Decr4       = 3'd7
+} IncrDecr deriving (Bits, Eq, FShow, DefaultValue);
 
 typedef struct {
-      Bit#(32)    val_r1;//value of register src1
-      Bit#(32)    val_r2;//value of register src2
-      Bit#(32)    val_dst;//value of register dst
+      Int#(32)    val_r1;//value of register src1
+      Int#(32)    val_r2;//value of register src2
+      Int#(32)    val_dst;//value of register dst
 
       Bit#(5)     src_r2;//indicate number of src2 register
       Bit#(5)     src_r1;//indicate number of src1 register
       Bit#(5)     dst_r;//indicate number of dest register
 
       //add to src2
-      Bit#(4)     incr_r2;//0 +1 or -1, +2,-2, +4, -4
+      Int#(4)     incr_r2;//0 +1 or -1, +2,-2, +4, -4
       Bool        incr_r2_enable;//
 
       //
       Bool        write_reg;//indicate write to RF(addres in dst_r, value in dst_v)
-      //load store operations, if both Bit#( is zero then bypass MEM stage
+      //load store operations, if both bits are zero then bypass MEM stage
       Bool        read_mem;//indicate read from memory(addres in src1+src2)
       Bool        write_mem;//indicate write to memory(addres in src1+src2, value in dst)
       //
@@ -97,46 +153,46 @@ typedef struct {
       Bool         jmpnz;
       Bool         jmpc;
       Bool         jmpnc;
-  } Pipe_s deriving(Bits,Eq);//,Bounded);
+} Pipe_s deriving (Bits, Eq, FShow, DefaultValue);
+
+typedef Maybe#(Pipe_s) MaybePipe_s;
+
+typedef Bit#(32) Word32;
+typedef struct {
+    Word32 address;
+    Word32 data;
+}Instruction deriving (Bits, Eq, FShow, DefaultValue);
+
+typedef Maybe#(Word32) MaybeWord32;
+typedef Maybe#(Instruction) MaybeInstruction;
+
+//Pipe_s defaultInstance = tagged Literal#(MyStruct){field1: 8'b0, field2: 16'h0};
 
 (* always_ready, always_enabled *)
-interface IF_ifc;
-  (* prefix = "IF" *)
-  interface AvalonMasterReadIfc avm_instructions;
-  (* prefix = "IF" *)
-  method Action check_pipe_stall(Bool pipe_stall);
-  (* prefix = "IF" *)
-  method Action set_new_address(Bit#(32) new_address , Bool new_address_valid);
-  (* prefix = "IF" *)
-  method ActionValue#(Bit#(32)) instruction;
-  (* prefix = "IF" *)
-  method ActionValue#(Bit#(32)) pc;
+interface IF_ifc#(type wd_id, type wd_addr, type wd_data, type wd_user);
+    interface AXI4_Master_IFC#(wd_id, wd_addr, wd_data, wd_user) axi_instruction;
+    method Action set_new_address(Word32 new_address);
 endinterface
 
 (* always_ready, always_enabled *)
 interface ID_ifc;
-  (* prefix = "ID" *)
-  method Action id_in(
-    Bit#(32) instruction,
-    Bit#(32) pc,
-    Pipe_s wb_mem,
-    Pipe_s wb_ex);
-  (* prefix = "ID" *)
-  method ActionValue#(Pipe_s) id_out(Bool pipe_stall);
+    (* prefix = "ID" *)
+    method Action wb_ex_in(Pipe_s wb_ex);
+    method Action wb_mem_in(Pipe_s wb_mem);
 endinterface
 
 (* always_ready, always_enabled *)
 interface EX_ifc;
-  (* prefix = "EX" *)
-  method Action ex_stage_in(Pipe_s ex_in);
-  (* prefix = "EX" *)
-  method ActionValue#(Pipe_s) ex_out(Bool pipe_stall);
-  method ActionValue#(Bool) new_address_valid(Bool pipe_stall);
-  method ActionValue#(Bit#(32)) new_address(Bool pipe_stall);
+  method ActionValue#(Word32) get_new_address();
 endinterface
 
-//operations
-typedef enum { LDR=4'd0, STR=4'd1, JMPUNC=4'd2, JMPF=4'd3, ALU=4'd4, LDRF=4'd5,Unknown=4'd15} Iset deriving (Bits, Eq);
+(* always_ready, always_enabled *)
+interface MEM_ifc #(numeric type wd_id,
+                    numeric type wd_addr,
+                    numeric type wd_data,
+                    numeric type wd_user);
+    interface AXI4_Master_IFC #(wd_id, wd_addr, wd_data, wd_user)  axi_data;
+endinterface
 
 function Bit#(4) instr_LDR; instr_LDR= 4'd0;endfunction
 //LDR Rdst,[Rsrc1],-+Rsrc2
@@ -229,9 +285,7 @@ function Bit#(4) instr_JMPF; instr_JMPF= 4'd3;endfunction
     //[4:0]dst
 
 function Bit#(4) instr_ALU; instr_ALU= 4'd4;endfunction
-// AND, OR, XOR,
-    // ADD,  MUL,
-    // SHR, SHL
+// AND, OR, XOR, ADD, MUL, SHR, SHL
     //[31:28]ALU_op
     //[27:25] type of op
     //0- AND

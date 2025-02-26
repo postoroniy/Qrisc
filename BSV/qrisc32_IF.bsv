@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 //    Project Qrisc32 is risc cpu implementation, purpose is studying
 //    Digital System Design course at Kyoung Hee University during my PhD earning
-//    Copyright (C) 2010-2023  Viacheslav Vinogradov
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
 //
 //    This library is free software; you can redistribute it and/or
 //    modify it under the terms of the GNU Lesser General Public
@@ -20,69 +20,54 @@
 //
 //////////////////////////////////////////////////////////////////////////////////////////////
 import Qrisc_pack::*;
+import AXI4_Types :: *;
+import FIFOF :: *;
+import Vector :: *;
+import Semi_FIFOF::*;
 
-module qrisc32_IF(IF_ifc);
-    Wire#(Bool)     if_stall_w          <- mkBypassWire;
-    Wire#(Bool)     if_wait_req_w       <- mkBypassWire;
-    //
-    Wire#(Bit#(32)) new_address_w       <- mkBypassWire;
-    Reg#(Bit#(32))  data_r              <- mkReg(0);
-    Reg#(Bit#(32))  address_r           <- mkReg(0);
-    Wire#(Bool)     new_address_valid_w <- mkBypassWire;
-    //
-    Reg#(Bit#(32))  stalled_adr0        <- mkReg(0);
-    // Reg#(Bit#(32))  stalled_adr1        <- mkReg(0);
+module qrisc32_IF#(
+  numeric wd_id,
+  numeric wd_addr,
+  numeric wd_data,
+  numeric wd_user,
+  FIFOF#(Instruction) instructionFifo)
+  (IF_ifc#(wd_id, wd_addr, wd_data, wd_user))
+  provisos (
+    Bits#(Bit#(32), wd_data),
+    Bits#(Bit#(32), wd_addr)
+    );
 
-    let all_stall_w    =   if_stall_w || if_wait_req_w;
-    let offset_w       = (all_stall_w || new_address_valid_w)? 0:4;
-    let base_w         = (new_address_valid_w)? new_address_w : address_r;
-    let jump_address_w = base_w + offset_w;
+  Reg#(Word32)  address_r <- mkRegA(unpack(0));
 
-    let pc_w = (all_stall_w)? stalled_adr0 : jump_address_w;
+  AXI4_Master_Xactor_IFC#(wd_id, wd_addr, wd_data, wd_user) master_instruction_if <- mkAXI4_Master_Xactor_2;
 
-    (* no_implicit_conditions *)
-    rule every;
-      if (!all_stall_w)
-      begin
-        stalled_adr0 <= jump_address_w;
-        // stalled_adr1 <= stalled_adr0;
-      end
-      address_r <= pc_w;
-    endrule
+  rule feedInstructionFifo(instructionFifo.notFull);
+  let request = AXI4_Rd_Addr {
+      arid: 0,
+      araddr: address_r,
+      arlen: 4,
+      arsize: 2,
+      arburst: axburst_incr,
+      arlock: 0,
+      arcache: 0,
+      arprot: 0,
+      arqos: 0,
+      arregion: 0,
+      aruser: 0
+    };
+    master_instruction_if.i_rd_addr.enq(request);
 
-  interface AvalonMasterReadIfc avm_instructions;
-    method Action check_wait(wait_req);
-      if_wait_req_w <= wait_req;
-    endmethod
+    let instr = master_instruction_if.o_rd_data.first;
+    master_instruction_if.o_rd_data.deq;
+    let i = Instruction {
+        data : instr.rdata ,
+        address : address_r
+    };
+    instructionFifo.enq(i);
+  endrule
 
-    method Action get_data(Bit#(32) data);
-      if(!if_stall_w && !if_wait_req_w)
-        data_r <= data;
-    endmethod
-
-    method Bit#(32) addr();
-      return address_r;
-    endmethod
-
-    method Bool rd();
-      return True;
-    endmethod
-  endinterface
-
-  method Action check_pipe_stall(pipe_stall);
-    if_stall_w <= pipe_stall;
+  method Action set_new_address(Word32 new_address);
+      address_r <= new_address;
   endmethod
-
-  method Action set_new_address(new_address,new_address_valid);
-    new_address_w <= new_address;
-    new_address_valid_w <= new_address_valid;
-  endmethod
-
-  method ActionValue#(Bit#(32)) instruction;
-    return data_r;
-  endmethod
-
-  method ActionValue#(Bit#(32)) pc;
-    return address_r;
-  endmethod
+  interface  axi_instruction = master_instruction_if.axi_side;
 endmodule
