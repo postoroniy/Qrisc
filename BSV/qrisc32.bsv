@@ -42,17 +42,15 @@ import qrisc32_MEM::*;
 module qrisc32(Qrisc_if #(1, 32,32, 1));
 
     FIFOF#(Instruction) instructionFifo <- mkFIFOF;
-    IF_ifc#(1, 32, 32, 1) instructionFetchStage <- qrisc32_IF(1, 32, 32, 1, instructionFifo);
-
     FIFOF#(Pipe_s) decodeFifo <- mkFIFOF;
-    ID_ifc instructionDecodeStage <- qrisc32_ID(instructionFifo, decodeFifo);
-
-// wb_ex_in
-
     FIFOF#(Pipe_s) exeFifo <- mkFIFOF;
-    EX_ifc instructionExecuteStage <- qrisc32_EX(decodeFifo,exeFifo);
+    FIFOF#(Pipe_s) wbExFifo <- mkFIFOF;
+    FIFOF#(Pipe_s) wbMemFifo <- mkFIFOF;
 
-    MEM_ifc#(1, 32, 32, 1) memStage <- qrisc32_MEM(1, 32, 32, 1,exeFifo);
+    IF_ifc#(1, 32, 32, 1) instructionFetchStage <- qrisc32_IF(1, 32, 32, 1,instructionFifo);
+    Empty instructionDecodeStage <- qrisc32_ID(instructionFifo,decodeFifo, wbExFifo,wbMemFifo);
+    EX_ifc instructionExecuteStage <- qrisc32_EX(decodeFifo, exeFifo, wbExFifo);
+    MEM_ifc#(1, 32, 32, 1) memStage <- qrisc32_MEM(1, 32, 32, 1, exeFifo, wbMemFifo);
 
     rule update_address;
         let new_address <- instructionExecuteStage.get_new_address();

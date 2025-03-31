@@ -1,6 +1,8 @@
-export PATH:=/home/slava/projects/bluespec/bsc/inst/bin:$(PATH)
+export PATH:=${HOME}/projects/bluespec/bsc/inst/bin:$(PATH)
 
-DISTRO ?= /home/slava/projects/bluespec/bsc/inst/lib
+DISTRO ?= ${HOME}/projects/bluespec/bsc/inst/lib
+BSV_LIBS ?= ${HOME}/projects/bluespec/Piccolo
+
 BSC = bsc
 BSC_PATHS = $(DISTRO)::%/Libraries:.
 
@@ -16,9 +18,9 @@ BSC_COMPILATION_FLAGS ?= -keep-fires -aggressive-conditions -no-warn-action-shad
 
 # Library sources (full paths)
 LIB_SRCS := \
-	/home/slava/projects/bluespec/Piccolo/src_Core/BSV_Additional_Libs/EdgeFIFOFs.bsv \
-	/home/slava/projects/bluespec/Piccolo/src_Core/BSV_Additional_Libs/Semi_FIFOF.bsv \
-	/home/slava/projects/bluespec/Piccolo/src_Testbench/Fabrics/AXI4/AXI4_Types.bsv
+	$(BSV_LIBS)/src_Core/BSV_Additional_Libs/EdgeFIFOFs.bsv \
+	$(BSV_LIBS)/src_Core/BSV_Additional_Libs/Semi_FIFOF.bsv \
+	$(BSV_LIBS)/src_Testbench/Fabrics/AXI4/AXI4_Types.bsv
 
 # Extract only the file names from LIB_SRCS
 LIB_SRCS_NAMES := $(notdir $(LIB_SRCS))
@@ -53,11 +55,11 @@ compile: lib $(BDIR)
 	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS):$(BDIR) -info-dir $(IDIR) -vdir $(VDIR) qrisc32_MEM.bsv
 
 # Build final Verilog output. The top-level module is named after the source file (qrisc32).
-$(VERILOG_OUTPUT): $(BSV_SOURCES) | $(BDIR) $(VDIR) $(IDIR) $(SDIR) compile 
+$(VERILOG_OUTPUT): $(BSV_SOURCES) | $(BDIR) $(VDIR) $(IDIR) $(SDIR) compile
 	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS):$(BDIR) -bdir $(BDIR) -info-dir $(IDIR) -vdir $(VDIR) \
 		-remove-dollar -g $(basename $(notdir $(BSV_SOURCES))) -verilog $(BSV_SOURCES)
 
 clean:
-	rm -rf ./*.bo ./*.ba ./*.v $(BDIR) $(VDIR) $(IDIR) $(SDIR)
+	rm -rf *.bo *.ba *.v $(BDIR) $(VDIR) $(IDIR) $(SDIR)
 
 .PHONY: all clean lib

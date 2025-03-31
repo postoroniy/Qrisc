@@ -20,7 +20,6 @@
 //
 //////////////////////////////////////////////////////////////////////////////////////////////
 `default_nettype none
-`timescale 1ns / 1ns
 
 module qrisc32_IF(
     input logic       clk,areset,
@@ -43,10 +42,9 @@ module qrisc32_IF(
     logic[31:0] stalled_adr1;
 
     always_comb begin
-        jump_address_w = base_w+offset_w;
-        if_stall       = avm_instructions.wait_req | pipe_stall;
-        pc=avm_instructions.address_r;
-        base_w=avm_instructions.address_r;
+        if_stall = avm_instructions.wait_req | pipe_stall;
+        pc       = avm_instructions.address_r;
+        base_w   = avm_instructions.address_r;
         offset_w=4;
         if(if_stall)
             offset_w=0;
@@ -54,6 +52,7 @@ module qrisc32_IF(
             base_w=new_address;
             offset_w=0;
         end
+        jump_address_w = base_w+offset_w;
     end
 
     always_ff@(posedge clk or posedge areset)
@@ -64,12 +63,12 @@ module qrisc32_IF(
         {stalled_adr0,stalled_adr1}<='0;
     end else begin
         if(~if_stall) begin
-            instruction<=avm_instructions.data_r;
-            avm_instructions.address_r<=jump_address_w;
-            stalled_adr0<=jump_address_w;
-            stalled_adr1<=stalled_adr0;
+            instruction                 <= avm_instructions.data_r;
+            avm_instructions.address_r  <= jump_address_w;
+            stalled_adr0                <= jump_address_w;
+            stalled_adr1                <= stalled_adr0;
         end else begin
-            avm_instructions.address_r<=stalled_adr0;
+            avm_instructions.address_r  <= stalled_adr0;
             //instruction<='0;
             //instruction<=avm_instructions.data_r;
 //synthesys translate_off

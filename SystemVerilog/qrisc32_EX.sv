@@ -20,7 +20,6 @@
 //
 //////////////////////////////////////////////////////////////////////////////////////////////
 `default_nettype none
-`timescale 1ns / 1ns
 
 module qrisc32_EX(
     input  logic                  clk,areset,pipe_stall,

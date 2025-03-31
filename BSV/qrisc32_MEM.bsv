@@ -26,15 +26,16 @@ import Semi_FIFOF::*;
 import Qrisc_pack::*;
 
 module qrisc32_MEM#(
-  numeric wd_id,
-  numeric wd_addr,
-  numeric wd_data,
-  numeric wd_user,
-  FIFOF#(Pipe_s) exeFifo)
-  (MEM_ifc#(wd_id, wd_addr, wd_data, wd_user))
-  provisos (
-    Bits#(Bit#(32), wd_data),
-    Bits#(Bit#(32), wd_addr)
+    numeric wd_id,
+    numeric wd_addr,
+    numeric wd_data,
+    numeric wd_user,
+    FIFOF#(Pipe_s) exeFifo,
+    FIFOF#(Pipe_s) wbMemFifo)
+    (MEM_ifc#(wd_id, wd_addr, wd_data, wd_user))
+    provisos (
+        Bits#(Bit#(32), wd_data),
+        Bits#(Bit#(32), wd_addr)
     );
 
     AXI4_Master_Xactor_IFC#(wd_id, wd_addr, wd_data, wd_user) master_data_if <- mkAXI4_Master_Xactor_2;
@@ -62,6 +63,7 @@ module qrisc32_MEM#(
             let data = master_data_if.o_rd_data.first;
             pipe_mem_in.val_dst = unpack(data.rdata);
             pipe_mem_in.write_reg = True;
+            wbMemFifo.enq(pipe_mem_in);
         end
         else begin
             let write_addr = AXI4_Wr_Addr {
@@ -81,10 +83,17 @@ module qrisc32_MEM#(
 
             let write_data = AXI4_Wr_Data {
                 wdata   :  pack(pipe_mem_in.val_dst),
-                wuser   : 0
-            };            
+                wuser   : 0,
+                wlast   : True,
+                wstrb   : 1
+            };
             master_data_if.i_wr_data.enq(write_data);
         end
     endrule
     interface axi_data = master_data_if.axi_side;
 endmodule
+
+// module [Module] mkQrisc32_MEM#(FIFOF#(Pipe_s) exeFifo, FIFOF#(Pipe_s) wbMemFifo) (MEM_ifc#(1, 32, 32, 1));
+//     MEM_ifc#(1, 32, 32, 1) memStage <- qrisc32_MEM(1, 32, 32, 1, exeFifo, wbMemFifo);
+//     return memStage;
+// endmodule

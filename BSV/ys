@@ -1,9 +1,5 @@
-read_verilog -sv risc_pack.sv
-read_verilog -sv qrisc32_EX.sv
-read_verilog -sv qrisc32_ID.sv
-read_verilog -sv qrisc32_IF.sv
-read_verilog -sv qrisc32_MEM.sv
-read_verilog -sv qrisc32.sv
+read_verilog ../../bsc/inst/lib/Verilog/FIFO2.v
+read_verilog verilog/qrisc32.v
 prep -flatten
 opt -full
 opt_expr -mux_undef -mux_bool -undriven -fine

@@ -25,14 +25,15 @@ import FIFOF :: *;
 
 module qrisc32_EX#(
         FIFOF#(Pipe_s) decodeFifo,
-        FIFOF#(Pipe_s) exeFifo
+        FIFOF#(Pipe_s) exeFifo,
+        FIFOF#(Pipe_s) wbExFifo
     ) (EX_ifc);
 
     Reg#(Bool)      flagZ                   <- mkRegA(False);
     Reg#(Bool)      flagC                   <- mkRegA(False);
     Reg#(Word32)    new_address_reg         <- mkRegA(0);
 
-    rule ex_stage(decodeFifo.notEmpty && !exeFifo.notFull);
+    rule ex_stage(decodeFifo.notEmpty && exeFifo.notFull);
         let ex_in = decodeFifo.first;
         decodeFifo.deq;
 
@@ -44,16 +45,7 @@ module qrisc32_EX#(
         Bool flagZ_v=False;
         Bool flagC_v=False;
 
-        if(ex_in.ldrf_op) begin
-            if(   (ex_in.jmpz  && flagZ)
-                ||(ex_in.jmpnz && !flagZ)
-                ||(ex_in.jmpc  && flagC)
-                ||(ex_in.jmpnc && !flagC)
-                )
-                ex_out_v.val_dst = ex_in.val_r1;
-            else
-                ex_out_v.val_dst = ex_in.val_r2;
-        end else if(ex_in.and_op) begin
+        if(ex_in.and_op) begin
             ex_out_v.val_dst = ex_in.val_r1 & ex_in.val_r2;
             flagZ_v = ex_out_v.val_dst==0;
         end else if(ex_in.or_op) begin
@@ -62,11 +54,7 @@ module qrisc32_EX#(
         end else if(ex_in.xor_op) begin
             ex_out_v.val_dst = ex_in.val_r1 ^ ex_in.val_r2;
             flagZ_v = ex_out_v.val_dst==0;
-        end else if(   ex_in.add_op//simple addition operation
-                || ex_in.jmpunc //jump unconditional calculate address = R1+R2(offset)
-                //jump conditional calculate address = R1+R2(offset) and check flags
-                || ex_in.jmpz || ex_in.jmpnz || ex_in.jmpc || ex_in.jmpnc)
-        begin
+        end else if(ex_in.add_op || ex_in.pc_change_op)begin
             flagC_v             =   summ_result[32]==1;
             ex_out_v.val_dst    =   unpack(summ_result[31:0]);
             flagZ_v             =   ex_out_v.val_dst==0;
@@ -85,34 +73,64 @@ module qrisc32_EX#(
         end else if(ex_in.cmp_op) begin
             flagZ_v             =   ex_out_v.val_r1==ex_out_v.val_r2;
             flagC_v             =   !(ex_out_v.val_r1>=ex_out_v.val_r2);
+        end else  if(ex_in.write_reg) begin
+            if( (!ex_out_v.check_z && !ex_out_v.check_nz && !ex_out_v.check_c && ex_out_v.check_nc) ||
+                (
+                    (ex_out_v.check_z && flagZ_v)   ||
+                    (ex_out_v.check_nz && !flagZ_v)    ||
+                    (ex_out_v.check_c && flagC_v)      ||
+                    (ex_out_v.check_nc && !flagC_v)
+                )
+            )
+                ex_out_v.val_dst = ex_in.val_r1;
+            else
+                ex_out_v.val_dst = ex_in.val_r2;
         end
-        let r2      = ex_in.val_r2;
-        let inc_r2  = signExtend(ex_in.incr_r2);
-        let r2_add  = r2 + inc_r2;
 
-        ex_out_v.val_r2 = (ex_out_v.incr_r2_enable)?r2_add:ex_out_v.val_r2;
+        let incr_val = case (ex_in.incr2)
+                        Incr1:  1;
+                        Incr2:  2;
+                        Incr4:  4;
+                        Decr1: -1;
+                        Decr2: -2;
+                        Decr4: -4;
+                        default: 0;
+                    endcase;
+
+        Int#(32) incr_val_sext = fromInteger(incr_val);
+        ex_out_v.val_r2 = unpack(pack(ex_in.val_r2) + pack(incr_val_sext));
 
         if (ex_out_v.and_op || ex_out_v.or_op || ex_out_v.xor_op || ex_out_v.add_op ||
             ex_out_v.mul_op || ex_out_v.shl_op || ex_out_v.shr_op || ex_out_v.cmp_op)begin
             flagZ   <= flagZ_v;
             flagC   <= flagC_v;
         end
-    
+
         if(ex_out_v.read_mem || ex_out_v.write_mem)
             ex_out_v.val_r1 = unpack(truncate(summ_result));//address for accessing
-    
-        if  (ex_out_v.jmpunc                ||
-            (ex_out_v.jmpz && flagZ_v)      ||
-            (ex_out_v.jmpnz && !flagZ_v)    ||
-            (ex_out_v.jmpc && flagC_v)      ||
-            (ex_out_v.jmpnc && !flagC_v) )
+
+        if  (ex_out_v.pc_change_op  &&
+                (
+                    (!ex_out_v.check_z && !ex_out_v.check_nz && !ex_out_v.check_c && ex_out_v.check_nc) ||
+                    (
+                        (ex_out_v.check_z && flagZ_v)   ||
+                        (ex_out_v.check_nz && !flagZ_v)    ||
+                        (ex_out_v.check_c && flagC_v)      ||
+                        (ex_out_v.check_nc && !flagC_v)
+
+                    )
+                )
+            )
         begin
             new_address_reg <= pack(ex_out_v.val_dst);
-        end    
+        end
+
         exeFifo.enq(ex_out_v);
+        wbExFifo.enq(ex_out_v);
     endrule
 
     method ActionValue#(Word32) get_new_address();
-            return new_address_reg;
+        return new_address_reg;
     endmethod
+
 endmodule

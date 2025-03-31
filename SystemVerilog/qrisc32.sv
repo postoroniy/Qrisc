@@ -30,7 +30,6 @@
 // - Instruction Read Avalon interface
 //--------------------------------------------------------------------------------------------
 `default_nettype none
-`timescale 1 ns / 1 ns
 
 interface     avalon_port;
   logic[31:0] address_r;//address
@@ -38,7 +37,6 @@ interface     avalon_port;
   logic[31:0] data_w;//data to write
   logic       rd,wr,wait_req;//read, write and wait request signals
 endinterface
-
 
 module qrisc32(
     input logic         clk,areset,
