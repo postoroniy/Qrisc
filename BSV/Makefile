@@ -31,7 +31,7 @@ LIB_OBJS := $(addprefix $(BDIR)/, $(patsubst %.bsv,%.bo,$(LIB_SRCS_NAMES)))
 BSV_SOURCES = qrisc32.bsv
 VERILOG_OUTPUT = $(VDIR)/qrisc32.v
 
-all: $(VERILOG_OUTPUT)
+all: $(VERILOG_OUTPUT) synth
 
 # Create required directories.
 $(BDIR) $(VDIR) $(IDIR) $(SDIR):
@@ -59,7 +59,10 @@ $(VERILOG_OUTPUT): $(BSV_SOURCES) | $(BDIR) $(VDIR) $(IDIR) $(SDIR) compile
 	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS):$(BDIR) -bdir $(BDIR) -info-dir $(IDIR) -vdir $(VDIR) \
 		-remove-dollar -g $(basename $(notdir $(BSV_SOURCES))) -verilog $(BSV_SOURCES)
 
+synth:
+	yosys -s ys
+
 clean:
 	rm -rf *.bo *.ba *.v $(BDIR) $(VDIR) $(IDIR) $(SDIR)
 
-.PHONY: all clean lib
+.PHONY: all clean lib synth
