@@ -1,2 +1,5 @@
 # Ignore all files and folders inside any "runs" directory within "sky" folders
 sky/**/runs/
+BSV/build
+BSV/sim
+BSV/info
