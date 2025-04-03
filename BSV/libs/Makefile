@@ -1,4 +1,3 @@
-
 toplevel_module = mkTop
 default: all
 
@@ -14,13 +13,12 @@ BSC_SIM_OPTS = -sim
 BDIR ?= build
 SDIR ?= sim
 
-$(BDIR)/$(toplevel_module).ba: $(BDIR)
-	bsc $(BSC_SIM_OPTS) $(BSC_FLAGS) -p $(BSC_PATHS) -bdir $(BDIR) -g $(toplevel_module) $(toplevel_module).bsv
+# Ensure mkTop.bsv is a dependency for the build
+$(BDIR)/$(toplevel_module).ba: $(BDIR) $(toplevel_module).bsv mkMultiCycleFunction.bsv
+	$(BSC) $(BSC_SIM_OPTS) $(BSC_FLAGS) -p $(BSC_PATHS) -bdir $(BDIR) -g $(toplevel_module) $(toplevel_module).bsv
 
 $(toplevel_module): $(BDIR)/$(toplevel_module).ba $(SDIR)
-	bsc $(BSC_SIM_OPTS) -simdir $(SDIR) -e $(toplevel_module) -p $(BSC_PATHS) -bdir $(BDIR) -o $(toplevel_module)
-
-$(toplevel_module).bsv: $(BDIR)/$(toplevel_module).ba
+	$(BSC) $(BSC_SIM_OPTS) -simdir $(SDIR) -e $(toplevel_module) -p $(BSC_PATHS) -bdir $(BDIR) -o $(toplevel_module)
 
 all: $(toplevel_module).vcd
 
@@ -33,9 +31,5 @@ $(BDIR) $(SDIR):
 vcd_view:
 	gtkwave $(toplevel_module).vcd &
 
-
-#--------------------------------------------------------------------
-# Clean up
-#--------------------------------------------------------------------
 clean:
 	rm -rf $(BDIR) $(SDIR) *.so $(toplevel_module) *.vcd
