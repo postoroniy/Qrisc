@@ -14,7 +14,8 @@ module [Module] mkMultiCycleFunction#(
 )
     provisos (
         Bits#(t_in, _),
-        Bits#(t_out, _)
+        Bits#(t_out, _),
+        Literal#(t_out)
     );
 
     Reg#(UInt#(8)) counter <- mkReg(0);
@@ -41,6 +42,7 @@ module [Module] mkMultiCycleFunction#(
     method Bool done = (active && counter == 0);
 
     method t_out result if (active && counter == 0);
+        //return 0; for testing
         return result_reg;
     endmethod
 endmodule

@@ -2,75 +2,48 @@ import Vector::*;
 import StmtFSM::*;
 import mkMultiCycleFunction::*;
 
+typedef 4 VecSize;
+typedef 2 MCFcycles;
+typedef 20 TestCycles;
+
 // import "BDPI" function ActionValue#(Bit#(32)) get_time();
 // import "BDPI" function Action seed_rng(Bit#(32) seed);
 // import "BDPI" function ActionValue#(Bit#(32)) urandom();
 
-function Bit#(32) sum_fn(Vector#(4, Bit#(32))  vec);
+function Bit#(32) sum_fn(Vector#(VecSize, Bit#(32))  vec);
     return foldr (\+ , 0, vec);
 endfunction
 
 module mkTop(Empty);
-    let m <- mkMultiCycleFunction(7,sum_fn);
+    let m <- mkMultiCycleFunction(valueOf(MCFcycles),sum_fn);
 
-    Vector#(4, Reg#(Bit#(32))) test_input <- replicateM(mkRegU);
+    Vector#(VecSize, Reg#(Bit#(32))) test_input <- replicateM(mkRegU);
     Reg#(Bit#(32)) expect_result <- mkRegU;
-    Reg#(Bit#(32)) result <- mkRegU;
+    Reg#(Bit#(8)) cycle <- mkRegU;
 
-    // Reg#(Bit#(62)) seed <- mkReg(2011111);
-    // Reg#(Int#(32)) rnd <- mkReg(12314);
-    // rule test;
-    //     $display("Seq00");
-    //     $display("Seed = %0d", seed);
-    //     let r <- $random();
-    //     rnd <= r;
-    //     $display("Random = %0d", r);
-    //     let ra <- $urandom_range(111,Just(100));
-    //     $display("Random range= %0d", ra);
-    //     let rb <- $urandom_range(101,Nothing);
-    //     $display("Random range= %0d", rb);
-    //     let seeded <- $test$plusargs("seed");
-    //     if (seeded)
-    //         $display("Test pluargs!");
-    //     $display("Seq01");
-    //     let bseed <- $value$plusargs("seed=%d",seed);
-    //     if (bseed)
-    //         $display("Seed = %0d", seed);
-    //     else
-    //         $display("Seed not valid");
-    //     $display("Seq02");
-    //     $finish;
-    //      let r <- urandom();
-    //      $display("Random = %0d", r);
-    //      let t <- get_time();
-    //     $display("Time = %0d", t);
-    //     seed_rng(t);
-    //     let r <- urandom();
-    //     $display("Random = %0d", r);
-    // endrule
     Stmt test = seq
         noAction;
-        seq
+        for(cycle<=0;cycle < fromInteger(valueOf(TestCycles));cycle <= cycle+1)seq
             action
-                for (Integer i = 0; i < 4; i = i + 1)begin
+                $display("Cycle %0d", cycle);
+                for (Integer i = 0; i < valueOf(VecSize); i = i + 1)begin
                     let r <- $random;
                     test_input[i] <= pack(r);
-                    $display("Test %0x", pack(r));
+                    $display("random %0x", pack(r));
                 end
-
+            endaction
+            par
+                m.start(readVReg(test_input));
+                expect_result <= sum_fn(readVReg(test_input));
+            endpar
+            while (!m.done) noAction;
+            if (expect_result == m.result)
+                $display("\033[32mTest passed\033[0m, expected = %0x, got = %0x", expect_result, m.result);
+            else action
+                $display("\033[31mTest failed\033[0m, expected = %0x, got = %0x", expect_result, m.result);
+                $fatal;
             endaction
         endseq
-        m.start(readVReg(test_input));
-        expect_result <= sum_fn(readVReg(test_input));
-        while (!m.done) noAction;
-        result <= m.result;
-
-        $display("Test %s",
-                 expect_result==result ?
-                 "passed" :
-                 "failed");
-
-        $display("expected result = %0x\nresult = %0x", expect_result,result);
         $finish;
     endseq;
 
