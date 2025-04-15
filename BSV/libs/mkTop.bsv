@@ -49,18 +49,19 @@ module mkTop(Empty);
     //     $display("Random = %0d", r);
     // endrule
     Stmt test = seq
+        noAction;
         seq
             action
-                Vector#(4, Bit#(32)) values = replicate(0);
                 for (Integer i = 0; i < 4; i = i + 1)begin
                     let r <- $random;
                     test_input[i] <= pack(r);
-                    values[i] = test_input[i];
+                    $display("Test %0x", pack(r));
                 end
-                expect_result <= sum_fn(values);
-                m.start(values);
+
             endaction
         endseq
+        m.start(readVReg(test_input));
+        expect_result <= sum_fn(readVReg(test_input));
         while (!m.done) noAction;
         result <= m.result;
 
@@ -69,7 +70,7 @@ module mkTop(Empty);
                  "passed" :
                  "failed");
 
-        $display("expected result = %0d\nresult = %0d", expect_result,result);
+        $display("expected result = %0x\nresult = %0x", expect_result,result);
         $finish;
     endseq;
 
