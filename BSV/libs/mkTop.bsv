@@ -3,12 +3,10 @@ import StmtFSM::*;
 import mkMultiCycleFunction::*;
 
 typedef 4 VecSize;
-typedef 2 MCFcycles;
-typedef 20 TestCycles;
+typedef 3 MCFcycles;
 
-// import "BDPI" function ActionValue#(Bit#(32)) get_time();
-// import "BDPI" function Action seed_rng(Bit#(32) seed);
-// import "BDPI" function ActionValue#(Bit#(32)) urandom();
+typedef 10000 TestCycles;
+typedef TLog#(TestCycles) CycleBits;
 
 function Bit#(32) sum_fn(Vector#(VecSize, Bit#(32))  vec);
     return foldr (\+ , 0, vec);
@@ -19,7 +17,7 @@ module mkTop(Empty);
 
     Vector#(VecSize, Reg#(Bit#(32))) test_input <- replicateM(mkRegU);
     Reg#(Bit#(32)) expect_result <- mkRegU;
-    Reg#(Bit#(8)) cycle <- mkRegU;
+    Reg#(Bit#(CycleBits)) cycle <- mkRegU;
 
     Stmt test = seq
         noAction;
@@ -36,9 +34,9 @@ module mkTop(Empty);
                 m.start(readVReg(test_input));
                 expect_result <= sum_fn(readVReg(test_input));
             endpar
-            while (!m.done) noAction;
+            // while (!m.done) noAction; //can be removed as Method in MCF is blocking
             if (expect_result == m.result)
-                $display("\033[32mTest passed\033[0m, expected = %0x, got = %0x", expect_result, m.result);
+                $display("\033[32mTest passed\033[0m");
             else action
                 $display("\033[31mTest failed\033[0m, expected = %0x, got = %0x", expect_result, m.result);
                 $fatal;
