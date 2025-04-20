@@ -1,0 +1,73 @@
+///////////////////////////////////////////////////////////////////////////////
+//    Project Qrisc32 is risc cpu implementation, purpose is studying
+//    Digital System Design course at Kyoung Hee University during my PhD earning
+//    Copyright (C) 2010-2025  Viacheslav Vinogradov
+//
+//    This library is free software; you can redistribute it and/or
+//    modify it under the terms of the GNU Lesser General Public
+//    License as published by the Free Software Foundation; either
+//    version 2.1 of the License, or (at your option) any later version.
+//
+//    This library is distributed in the hope that it will be useful,
+//    but WITHOUT ANY WARRANTY; without even the implied warranty of
+//    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+//    Lesser General Public License for more details.
+//
+//    You should have received a copy of the GNU Lesser General Public
+//    License along with this library; if not, write to the Free Software
+//    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+//
+///////////////////////////////////////////////////////////////////////////////
+
+#include "Vqrisc32_flags_tb.h"
+#include <verilated.h>
+#if VM_TRACE
+#include "verilated_vcd_c.h"
+#endif
+
+int main(int argc, char **argv, char **env)
+{
+  VerilatedContext *contextp = new VerilatedContext;
+  contextp->commandArgs(argc, argv);
+  Vqrisc32_flags_tb *top = new Vqrisc32_flags_tb{contextp};
+
+#if VM_TRACE
+  Verilated::traceEverOn(true);
+  VerilatedVcdC *tfp = new VerilatedVcdC;
+  top->trace(tfp, 99);
+  tfp->open("build/vcd/qrisc32_flags_tb.vcd");
+#endif
+
+  top->areset = 1;
+  top->verbose = 0;
+  top->Istop_enable = 0;
+  top->Dstop_enable = 0;
+
+  bool testing = true;
+  while (testing)
+  {
+    contextp->timeInc(1);
+    top->clk = !top->clk;
+    top->eval();
+#if VM_TRACE
+    tfp->dump(contextp->time());
+#endif
+    if (contextp->time() < 8)
+      continue;
+    top->areset = 0;
+
+    if (top->Istop_active)
+    {
+      top->areset = 1;
+    }
+    testing = !top->done;
+  }
+
+#if VM_TRACE
+  tfp->close();
+#endif
+
+  delete top;
+  delete contextp;
+  return 0;
+}

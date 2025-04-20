@@ -1,0 +1,256 @@
+package Qrisc32Model(Word32, MemIdx, Qrisc32ModelIfc(..), mkQrisc32Model) where
+
+import RegFile
+
+type Word32 = Bit 32
+type RegIdx = Bit 5
+type MemIdx = Bit 10
+
+interface Qrisc32ModelIfc =
+    done :: Bool
+    dmemAt :: Bit 32 -> Word32
+
+sext15 :: Bit 15 -> Word32
+sext15 imm =
+    let signed :: Int 15
+        signed = unpack imm
+        extended :: Int 32
+        extended = extend signed
+    in pack extended
+
+incrValue :: Bit 3 -> (Int 4, Bool)
+incrValue code =
+    case code of
+        0 -> (0, False)
+        1 -> (1, True)
+        2 -> (2, True)
+        3 -> (4, True)
+        4 -> (0, False)
+        5 -> ((0 - 1), True)
+        6 -> ((0 - 2), True)
+        _ -> ((0 - 4), True)
+
+incWord :: Word32 -> Int 4 -> Word32
+incWord source incr =
+    let sourceInt :: Int 32
+        sourceInt = unpack source
+        incrInt :: Int 32
+        incrInt = extend incr
+    in pack (sourceInt + incrInt)
+
+flagCond :: Bit 2 -> Bool -> Bool -> Bool
+flagCond mode z c =
+    case mode of
+        0 -> z
+        1 -> not z
+        2 -> c
+        _ -> not c
+
+mkQrisc32Model :: RegFile MemIdx Word32 ->
+                  RegFile MemIdx Word32 ->
+                  Bit 32 -> Bit 32 -> Bit 32 ->
+                  Module Qrisc32ModelIfc
+mkQrisc32Model imem dmem imemLast dmemLast maxCycles =
+    module
+        rf :: RegFile RegIdx Word32 <- mkRegFileLoad "build/hex/rf_zero_32.hex" 0 31
+        pc :: Reg Word32 <- mkReg 0
+        flagZ :: Reg Bool <- mkReg False
+        flagC :: Reg Bool <- mkReg False
+        doneReg :: Reg Bool <- mkReg False
+        incPending :: Reg Bool <- mkReg False
+        incPendingTarget :: Reg RegIdx <- mkReg 0
+        incPendingValue :: Reg Word32 <- mkReg 0
+        lastPc :: Reg Word32 <- mkReg 32'hffff_ffff
+        samePcCount :: Reg (Bit 4) <- mkReg 0
+        cycleCount :: Reg (Bit 32) <- mkReg 0
+
+        let finishStep currentPc nextPc incEn incTarget incSource incr =
+                action
+                    if incEn
+                        then action
+                            incPending := True
+                            incPendingTarget := incTarget
+                            incPendingValue := incWord incSource incr
+                        else noAction
+                    pc := nextPc
+                    cycleCount := cycleCount + 1
+                    if nextPc == currentPc && currentPc == lastPc
+                        then samePcCount := samePcCount + 1
+                        else samePcCount := 0
+                    lastPc := currentPc
+                    if samePcCount >= 4 || cycleCount >= maxCycles
+                        then doneReg := True
+                        else noAction
+
+            commitWrite currentPc nextPc dst writeValue incEn incTarget incSource incr =
+                action
+                    rf.upd dst writeValue
+                    finishStep currentPc nextPc incEn incTarget incSource incr
+
+            commitNoWrite currentPc nextPc incEn incTarget incSource incr =
+                finishStep currentPc nextPc incEn incTarget incSource incr
+
+        rules
+          "step": when (not doneReg && not incPending) ==>
+            action
+                let imemIdx32 :: Bit 32
+                    imemIdx32 = pc >> 2
+                if imemIdx32 > imemLast
+                    then doneReg := True
+                    else action
+                        let inst :: Word32
+                            inst = imem.sub (truncate imemIdx32)
+                            currentPc :: Word32
+                            currentPc = pc
+                            nextPcDefault :: Word32
+                            nextPcDefault = pc + 4
+                            op :: Bit 4
+                            op = inst[31:28]
+                            mode :: Bit 2
+                            mode = inst[27:26]
+                            dst :: RegIdx
+                            dst = inst[4:0]
+                            src1 :: RegIdx
+                            src1 = inst[9:5]
+                            src2 :: RegIdx
+                            src2 = inst[14:10]
+                            imm16 :: Bit 16
+                            imm16 = inst[20:5]
+                            off15 :: Bit 15
+                            off15 = inst[24:10]
+                            incrInfo = incrValue inst[24:22]
+                            incr = tpl_1 incrInfo
+                            incrEnDefault = tpl_2 incrInfo
+                            r1 :: Word32
+                            r1 = rf.sub src1
+                            r2 :: Word32
+                            r2 = rf.sub src2
+                            dstVal :: Word32
+                            dstVal = rf.sub dst
+                            offset :: Word32
+                            offset = if inst[25:25] == 1 then r2 else sext15 off15
+                        case op of
+                            4'h0 ->
+                                case mode of
+                                    0 ->
+                                        if dst /= src1
+                                            then commitWrite currentPc nextPcDefault dst r1 incrEnDefault src2 r2 incr
+                                            else commitNoWrite currentPc nextPcDefault incrEnDefault src2 r2 incr
+                                    1 ->
+                                        commitWrite currentPc nextPcDefault dst ((imm16 ++ dstVal[15:0]) :: Word32) False src2 r2 incr
+                                    2 ->
+                                        commitWrite currentPc nextPcDefault dst ((dstVal[31:16] ++ imm16) :: Word32) False src2 r2 incr
+                                    _ ->
+                                        let addr :: Word32
+                                            addr = r1 + offset
+                                            wordAddr :: Bit 32
+                                            wordAddr = addr >> 2
+                                            value :: Word32
+                                            value = if wordAddr <= dmemLast then dmem.sub (truncate wordAddr) else 0
+                                            incEn = inst[25:25] == 1
+                                        in commitWrite currentPc nextPcDefault dst value incEn src2 r2 incr
+                            4'h1 ->
+                                let addr :: Word32
+                                    addr = r1 + offset
+                                    wordAddr :: Bit 32
+                                    wordAddr = addr >> 2
+                                    incEn = inst[25:25] == 1
+                                in action
+                                    if wordAddr <= dmemLast
+                                        then dmem.upd (truncate wordAddr) dstVal
+                                        else noAction
+                                    commitNoWrite currentPc nextPcDefault incEn src2 r2 incr
+                            4'h2 ->
+                                case mode of
+                                    0 ->
+                                        commitNoWrite currentPc (zeroExtend inst[25:0]) False src2 r2 incr
+                                    1 ->
+                                        let incEn = inst[25:25] == 1
+                                        in commitNoWrite currentPc (currentPc + offset) incEn src2 r2 incr
+                                    2 ->
+                                        let incEn = inst[25:25] == 1
+                                        in commitWrite currentPc (currentPc + offset) dst currentPc incEn src2 r2 incr
+                                    _ ->
+                                        let incEn = inst[25:25] == 1
+                                        in commitNoWrite currentPc dstVal incEn src2 r2 incr
+                            4'h3 ->
+                                let cond = flagCond mode flagZ flagC
+                                    nextPc = if cond then currentPc + offset else nextPcDefault
+                                    incEn = inst[25:25] == 1
+                                in commitNoWrite currentPc nextPc incEn src2 r2 incr
+                            4'h4 ->
+                                case inst[27:25] of
+                                    0 ->
+                                        let value = r1 & r2
+                                        in action
+                                            flagC := False
+                                            flagZ := value == 0
+                                            commitWrite currentPc nextPcDefault dst value incrEnDefault src2 r2 incr
+                                    1 ->
+                                        let value = r1 | r2
+                                        in action
+                                            flagC := False
+                                            flagZ := value == 0
+                                            commitWrite currentPc nextPcDefault dst value incrEnDefault src2 r2 incr
+                                    2 ->
+                                        let value = r1 ^ r2
+                                        in action
+                                            flagC := False
+                                            flagZ := value == 0
+                                            commitWrite currentPc nextPcDefault dst value incrEnDefault src2 r2 incr
+                                    3 ->
+                                        let result :: Bit 33
+                                            result = zeroExtend r1 + zeroExtend r2
+                                            value :: Word32
+                                            value = result[31:0]
+                                        in action
+                                            flagC := result[32:32] == 1
+                                            flagZ := value == 0
+                                            commitWrite currentPc nextPcDefault dst value incrEnDefault src2 r2 incr
+                                    4 ->
+                                        let prod :: Bit 64
+                                            prod = zeroExtend r1 * zeroExtend r2
+                                            value :: Word32
+                                            value = prod[31:0]
+                                        in action
+                                            flagC := False
+                                            flagZ := value == 0
+                                            commitWrite currentPc nextPcDefault dst value incrEnDefault src2 r2 incr
+                                    5 ->
+                                        let shl :: Bit 33
+                                            shl = zeroExtend r1 << r2[4:0]
+                                            value :: Word32
+                                            value = shl[31:0]
+                                        in action
+                                            flagC := False
+                                            flagZ := value == 0
+                                            commitWrite currentPc nextPcDefault dst value incrEnDefault src2 r2 incr
+                                    6 ->
+                                        let shr :: Bit 33
+                                            shr = (r1 ++ 1'b0) >> r2[4:0]
+                                            value :: Word32
+                                            value = shr[32:1]
+                                        in action
+                                            flagC := shr[0:0] == 1
+                                            flagZ := value == 0
+                                            commitWrite currentPc nextPcDefault dst value incrEnDefault src2 r2 incr
+                                    _ ->
+                                        action
+                                            flagZ := r1 == r2
+                                            flagC := r1 < r2
+                                            commitNoWrite currentPc nextPcDefault incrEnDefault src2 r2 incr
+                            4'h5 ->
+                                let cond = flagCond mode flagZ flagC
+                                    value = if cond then r1 else r2
+                                in commitWrite currentPc nextPcDefault dst value incrEnDefault src2 r2 incr
+                            _ ->
+                                commitNoWrite currentPc nextPcDefault incrEnDefault src2 r2 incr
+
+          "applyIncrement": when incPending ==>
+            action
+                rf.upd incPendingTarget incPendingValue
+                incPending := False
+
+        interface
+            done = doneReg
+            dmemAt idx = dmem.sub (truncate idx)

@@ -1,0 +1,34 @@
+package SmokeTest where
+
+import RegFile
+import Qrisc32Model
+
+mkSmokeTest :: Module Empty
+mkSmokeTest =
+    module
+        imem :: RegFile MemIdx Word32 <- mkRegFileLoad "build/hex/smoke_1024.hex" 0 1023
+        dmem :: RegFile MemIdx Word32 <- mkRegFileLoad "build/hex/smoke_reversed_1024.hex" 0 1023
+        cpu :: Qrisc32ModelIfc <- mkQrisc32Model imem dmem 1023 1023 4096
+        checking :: Reg Bool <- mkReg False
+        checkIdx :: Reg (Bit 4) <- mkReg 0
+
+        rules
+          "startCheck": when (cpu.done && not checking) ==>
+            checking := True
+
+          "check": when checking ==>
+            let idx32 :: Word32
+                idx32 = zeroExtend checkIdx
+                got = cpu.dmemAt idx32
+                expected :: Word32
+                expected = idx32 + 1
+            in if got /= expected
+               then action
+                    $display "FAIL: qrisc32 sort smoke dmem[%0d]=%0d expected %0d" checkIdx got expected
+                    $finish 1
+               else if checkIdx == 9
+               then action
+                    $display "PASS: qrisc32 sort smoke"
+                    $finish 0
+               else action
+                    checkIdx := checkIdx + 1

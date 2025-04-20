@@ -1,6 +1,40 @@
-# Ignore all files and folders inside any "runs" directory within "sky" folders
-sky/**/runs/
-**/build
-**/sim
-**/info
-**/verilog
+# Project build outputs
+.local/
+**/build/
+**/sim/
+**/info/
+**/verilog/
+**/obj_dir/
+**/dist-newstyle/
+
+# Simulator and waveform outputs
+*.vcd
+*.fst
+
+# Bluespec / native compiler outputs
+*.bo
+*.ba
+*.o
+*.so
+
+# Python caches
+.venv/
+*.egg-info/
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# LaTeX generated files
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.nav
+*.out
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+

@@ -1,0 +1,22 @@
+package AxiTest where
+
+import RegFile
+import Qrisc32Model
+
+mkAxiTest :: Module Empty
+mkAxiTest =
+    module
+        imem :: RegFile MemIdx Word32 <- mkRegFileLoad "build/hex/axi_smoke_1024.hex" 0 1023
+        dmem :: RegFile MemIdx Word32 <- mkRegFile 0 1023
+        cpu :: Qrisc32ModelIfc <- mkQrisc32Model imem dmem 17 1023 4096
+
+        rules
+          "check": when cpu.done ==>
+            let got = cpu.dmemAt 0
+            in if got /= 12
+               then action
+                    $display "FAIL: AXI smoke dmem[0]=%0d expected 12" got
+                    $finish 1
+               else action
+                    $display "PASS: AXI smoke dmem[0] = 12"
+                    $finish 0

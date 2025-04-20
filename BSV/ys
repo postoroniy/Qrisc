@@ -1,10 +1,11 @@
+read_verilog ../../bsc/inst/lib/Verilog/FIFO1.v
 read_verilog ../../bsc/inst/lib/Verilog/FIFO2.v
-read_verilog verilog/qrisc32.v
+read_verilog build/verilog/qrisc32.v
 # prep -flatten
 #opt -full
 #opt_expr -mux_undef -mux_bool -undriven -fine
 synth
-write_verilog -simple-lhs -noattr ../sky/BSV/qrisc32.v
+write_verilog -simple-lhs -noattr build/yosys/qrisc32_synth.v
 # write_cxxrtl yosys_qrisc32.cpp
 # synth_xilinx -family xc7 -noiopad -noclkbuf
 # opt_clean

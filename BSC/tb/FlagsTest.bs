@@ -1,0 +1,23 @@
+package FlagsTest where
+
+import RegFile
+import Qrisc32Model
+
+mkFlagsTest :: Module Empty
+mkFlagsTest =
+    module
+        imem :: RegFile MemIdx Word32 <- mkRegFileLoad "build/hex/flags_1024.hex" 0 1023
+        dmem :: RegFile MemIdx Word32 <- mkRegFile 0 1023
+        cpu :: Qrisc32ModelIfc <- mkQrisc32Model imem dmem 19 1023 4096
+
+        rules
+          "check": when cpu.done ==>
+            let got0 = cpu.dmemAt 0
+                got1 = cpu.dmemAt 1
+            in if got0 /= 5 || got1 /= 7
+               then action
+                    $display "FAIL: dmem[0]=%0d dmem[1]=%0d expected 5 7" got0 got1
+                    $finish 1
+               else action
+                    $display "PASS: dmem[0]=5 dmem[1]=7"
+                    $finish 0

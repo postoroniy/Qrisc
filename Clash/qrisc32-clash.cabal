@@ -1,0 +1,32 @@
+cabal-version: 3.0
+name: qrisc32-clash
+version: 0.1.0
+build-type: Simple
+synopsis: qrisc32 Clash RTL and vector runner
+description: Clash implementation of qrisc32 plus shared vector regression runner.
+license: LGPL-2.1-or-later
+author: Viacheslav Vinogradov
+maintainer: vinogradov@opencores.org
+category: Hardware
+
+library
+  hs-source-dirs: src
+  exposed-modules:
+      Qrisc32Model
+    , Qrisc32RTL
+  build-depends:
+      base >=4.14 && <5
+    , containers >=0.6 && <0.8
+    , clash-prelude >=1.11 && <1.12
+  default-language: Haskell2010
+  ghc-options: -Wall
+
+executable qrisc32-clash-vectors
+  main-is: Main.hs
+  hs-source-dirs: tb
+  build-depends:
+      base >=4.14 && <5
+    , containers >=0.6 && <0.8
+    , qrisc32-clash
+  default-language: Haskell2010
+  ghc-options: -Wall
