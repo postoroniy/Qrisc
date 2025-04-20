@@ -35,9 +35,9 @@ random_bdpi.so: random_bdpi.c
 $(BDIR) $(SDIR):
 	mkdir -p $@
 
-# test:
-# 	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS):$(BDIR) -bdir $(BDIR) \
-# 	-remove-dollar -g mkTop -verilog mkTop.bsv
+test:
+	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS):$(BDIR) -bdir $(BDIR) \
+	-remove-dollar -g mkTop -verilog mkTop.bsv
 # need to add clk and reset drivers
 #iverilog -o simulation  mkTop.v
 #vvp -i ./simulation -fst

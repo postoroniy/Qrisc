@@ -19,6 +19,8 @@ module mkTop(Empty);
     Reg#(Bit#(32)) expect_result <- mkRegU;
     Reg#(Bit#(CycleBits)) cycle <- mkRegU;
 
+    Reg#(Bit#(64)) testv <- mkRegU;
+
     Stmt test = seq
         noAction;
         for(cycle<=0;cycle < fromInteger(valueOf(TestCycles));cycle <= cycle+1)seq
@@ -46,4 +48,46 @@ module mkTop(Empty);
     endseq;
 
     mkAutoFSM(test);
+
+    // rule testv_rule;
+    //     let b <- $value$plusargs("testv=%d",testv);
+    //     if (b)
+    //         $display("testv = %0x", testv);
+    //     else
+    //         $display("testv not valid");
+
+    //     let a <- $value$plusargs("testb=%b",testv);
+    //     if (a)
+    //         $display("testv = %0x", testv);
+    //     else
+    //         $display("testv not valid");
+
+    //     let c <- $value$plusargs("testS=%s",testv);
+    //     if (c)
+    //         $display("testv = %s", testv);
+    //     else
+    //         $display("testv not valid");
+
+    //     let d <- $value$plusargs("testF=%f",testv);
+    //     $display("testv F = %02f", testv);
+    //     // Bit#(64) test64 = testv;//64'h123456789abcdef0;
+    //     // Real testF = $bitstoreal(test64);
+    //     // $display("testF = %02f",testF);
+    //     // String testS="123";
+    //     // $display("testS = %s", testS);
+    //     // testS="asdf";
+    //     // $display("testS = %s", testS);
+
+    //     let r <- $random(2);//
+    //     $display("Random = %0d", r);
+    //     let r1 <- $random();
+    //     $display("Random = %0d", r1);
+
+    //     let ra <- $urandom_range(111,109);//to limit min value by 100 need to pass param as shown
+    //     $display("Random range= %0d", ra);
+    //     let rb <- $urandom_range(10);//default min is 0 here.
+    //     $display("Random range= %0d", rb);
+    //     $finish;
+    // endrule
+
 endmodule

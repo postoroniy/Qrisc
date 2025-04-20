@@ -27,6 +27,8 @@ import FIFOF :: *;
 import Vector :: *;
 import Semi_FIFOF::*;
 
+// import
+
 interface Qrisc_if #(numeric type wd_id,
                     numeric type wd_addr,
                     numeric type wd_data,
