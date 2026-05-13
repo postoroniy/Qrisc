@@ -171,4 +171,18 @@ interface MEM_ifc #(numeric type wd_id,
     method Bool can_accept_rd_resp();
     method Bool can_accept_wr_resp();
 endinterface
+
+(* always_ready, always_enabled *)
+interface RF_IFC;
+    method Word32 read_r1(RegIdx addr);
+    method Word32 read_r2(RegIdx addr);
+    method Word32 read_dst(RegIdx addr);
+    method Action write_wb(Pipe_s ex, Pipe_s mem);
+endinterface
+
+(* always_ready, always_enabled *)
+interface WB_IFC;
+    method Pipe_s forward_ex();
+    method Pipe_s forward_mem();
+endinterface
 endpackage

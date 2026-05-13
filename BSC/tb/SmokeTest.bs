@@ -2,6 +2,7 @@ package SmokeTest where
 
 import AXI4_Types
 import Connectable
+import FIFOF
 import RegFile
 import Semi_FIFOF
 import Qrisc32RTL
@@ -12,8 +13,10 @@ mkSmokeTest =
         cycleCount :: Reg (Bit 32) <- mkReg 0
         checking :: Reg Bool <- mkReg False
         checkIdx :: Reg (Bit 4) <- mkReg 0
-        sawInstStop :: Reg Bool <- mkReg False
-        checkAt :: Reg (Bit 32) <- mkReg 0
+        instStopQueued :: Reg Bool <- mkReg False
+        terminalSeen :: Reg Bool <- mkReg False
+        terminalDelay :: Reg (Bit 6) <- mkReg 0
+        terminalFetch :: FIFOF Bool <- mkFIFOF
 
         imem :: RegFile (Bit 32) Word32 <- mkRegFileLoad "build/hex/smoke_1024.hex" 0 1023
         dmem :: RegFile (Bit 32) Word32 <- mkRegFileLoad "build/hex/smoke_reversed_1024.hex" 0 1023
@@ -44,10 +47,10 @@ mkSmokeTest =
             action
                 let req = axiInst.o_rd_addr.first
                 axiInst.o_rd_addr.deq
-                if not sawInstStop && req.araddr > 32'd372
+                if not instStopQueued && req.araddr > 32'd372
                     then action
-                        sawInstStop := True
-                        checkAt := cycleCount + 32
+                        terminalFetch.enq True
+                        instStopQueued := True
                     else noAction
                 instRdPending := True
                 instRdAddr := truncate req.araddr
@@ -107,10 +110,18 @@ mkSmokeTest =
           "tick": when True ==>
             action
                 cycleCount := cycleCount + 1
-                if sawInstStop && cycleCount == checkAt
-                    then checking := True
+                if not terminalSeen && terminalFetch.notEmpty
+                    then action
+                        terminalFetch.deq
+                        terminalSeen := True
+                        terminalDelay := 32
+                    else if terminalSeen && not checking
+                    then action
+                        if terminalDelay == 0
+                            then checking := True
+                            else terminalDelay := terminalDelay - 1
                     else noAction
-                if cycleCount == 12000 && not sawInstStop
+                if cycleCount == 12000 && not terminalSeen && not terminalFetch.notEmpty
                     then action
                         $display "FAIL: qrisc32 sort smoke timeout before terminal instruction fetch"
                         $finish 1

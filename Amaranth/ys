@@ -1,7 +1,5 @@
-read_verilog ../../bsc/inst/lib/Verilog/FIFO1.v
-read_verilog ../../bsc/inst/lib/Verilog/FIFO2.v
 read_verilog build/verilog/qrisc32.v
-prep -top qrisc32 -flatten
+prep -flatten
 opt -full
 opt_expr -mux_undef -mux_bool -undriven -fine
 write_verilog -simple-lhs -noattr build/yosys/yosys_qrisc32.v

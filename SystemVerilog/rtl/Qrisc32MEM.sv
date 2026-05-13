@@ -20,17 +20,17 @@
 ///////////////////////////////////////////////////////////////////////////////
 `default_nettype none
 
-module qrisc32_MEM(
+module Qrisc32MEM(
         input logic         clk,areset,
         qrisc32_mem_port    data_read_mem,
         qrisc32_mem_port    data_write_mem,
-        input risc_pack::pipe_struct_t   pipe_mem_in,
-        output risc_pack::pipe_struct_t  pipe_mem_out,
+        input Qrisc_pack::pipe_struct_t   pipe_mem_in,
+        output Qrisc_pack::pipe_struct_t  pipe_mem_out,
         output logic        pipe_stall,
         input logic         verbose
     );
 
-    risc_pack::pipe_struct_t pipe_mem_in0,pipe_mem_in1;
+    Qrisc_pack::pipe_struct_t pipe_mem_in0,pipe_mem_in1;
 
     logic       rd_stall;
     logic       wr_stall;

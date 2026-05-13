@@ -1,5 +1,6 @@
 read_verilog ../../bsc/inst/lib/Verilog/FIFO1.v
 read_verilog ../../bsc/inst/lib/Verilog/FIFO2.v
+read_verilog build/verilog/mkQrisc32.v
 read_verilog build/verilog/qrisc32.v
 prep -top qrisc32 -flatten
 opt -full

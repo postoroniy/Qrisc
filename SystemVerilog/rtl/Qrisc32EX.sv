@@ -21,10 +21,10 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 `default_nettype none
 
-module qrisc32_EX(
+module Qrisc32EX(
     input  logic                  clk,areset,pipe_stall,
-    input  risc_pack::pipe_struct_t pipe_ex_in,
-    output risc_pack::pipe_struct_t pipe_ex_out,
+    input  Qrisc_pack::pipe_struct_t pipe_ex_in,
+    output Qrisc_pack::pipe_struct_t pipe_ex_out,
 
     output logic          new_address_valid,//to mem stage
     output logic[31:0]    new_address//to mem stage
@@ -36,14 +36,16 @@ module qrisc32_EX(
     logic signed[3:0]    inc_r2;
     logic signed[31:0]   r2_add;
     logic[32:0]  summ_result;
+    logic[32:0]  shl_result;
 
-    risc_pack::pipe_struct_t pipe_ex_out_w;
+    Qrisc_pack::pipe_struct_t pipe_ex_out_w;
 
     always_comb begin
         r2      = pipe_ex_in.val_r2;
         inc_r2  = pipe_ex_in.incr_r2;
-        r2_add  = r2 + inc_r2;
+        r2_add  = r2 + {{28{inc_r2[3]}}, inc_r2};
         summ_result = pipe_ex_in.val_r1 + pipe_ex_in.val_r2;
+        shl_result = {1'b0, pipe_ex_in.val_r1} << pipe_ex_in.val_r2[4:0];
         //
         pipe_ex_out_w=pipe_ex_in;
         flagZ_w=0;
@@ -81,7 +83,7 @@ module qrisc32_EX(
             {flagC_w,pipe_ex_out_w.val_dst}=pipe_ex_in.val_r1 * pipe_ex_in.val_r2;
             flagZ_w=(pipe_ex_out_w.val_dst==0)?1:0;
         end else if(pipe_ex_in.shl_op) begin
-            {flagC_w,pipe_ex_out_w.val_dst}=pipe_ex_in.val_r1 << pipe_ex_in.val_r2;
+            {flagC_w,pipe_ex_out_w.val_dst}=shl_result;
             flagZ_w=(pipe_ex_out_w.val_dst==0)?1:0;
         end else if(pipe_ex_in.shr_op) begin
             {pipe_ex_out_w.val_dst,flagC_w}={pipe_ex_in.val_r1,1'b0 }>> pipe_ex_in.val_r2;
@@ -118,7 +120,7 @@ module qrisc32_EX(
         begin
             pipe_ex_out<=pipe_ex_out_w;
             if(pipe_ex_in.read_mem| pipe_ex_in.write_mem)
-                pipe_ex_out.val_r1<=summ_result;//address for accessing
+                pipe_ex_out.val_r1<=summ_result[31:0];//address for accessing
         end
     end
 endmodule

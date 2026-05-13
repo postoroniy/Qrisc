@@ -205,6 +205,8 @@ class Qrisc32(Elaboratable):
         pipe_mem_out = make_pipe("pipe_mem_out")
         pipe_mem_in0 = make_pipe("pipe_mem_in0")
         pipe_mem_in1 = make_pipe("pipe_mem_in1")
+        pipe_wb_ex = make_pipe("pipe_wb_ex")
+        pipe_wb_mem = make_pipe("pipe_wb_mem")
 
         rf = Array(Signal(32, name=f"rf_{i}") for i in range(32))
         imem_addr = Signal(32, name="if_instruction_address")
@@ -451,6 +453,12 @@ class Qrisc32(Elaboratable):
                 m.d.comb += value.eq(pipe_ex_out["val_dst"])
             with m.Elif(pipe_ex_out["incr_r2_enable"] & (pipe_ex_out["src_r2"] == reg_idx)):
                 m.d.comb += value.eq(pipe_ex_out["val_r2"])
+            with m.Elif(pipe_wb_mem["write_reg"] & (pipe_wb_mem["dst_r"] == reg_idx)):
+                m.d.comb += value.eq(pipe_wb_mem["val_dst"])
+            with m.Elif(pipe_wb_ex["write_reg"] & (pipe_wb_ex["dst_r"] == reg_idx)):
+                m.d.comb += value.eq(pipe_wb_ex["val_dst"])
+            with m.Elif(pipe_wb_ex["incr_r2_enable"] & (pipe_wb_ex["src_r2"] == reg_idx)):
+                m.d.comb += value.eq(pipe_wb_ex["val_r2"])
             return value
 
         m.d.comb += pipe_zero(pipe_id_w)
@@ -610,13 +618,15 @@ class Qrisc32(Elaboratable):
         shr_result = Signal(33, name="ex_shr_result")
 
         m.d.comb += pipe_eq(pipe_ex_w, pipe_id_out)
+        sum_wide = Cat(pipe_id_out["val_r1"], Const(0, 1)) + Cat(pipe_id_out["val_r2"], Const(0, 1))
+        shl_wide = Cat(pipe_id_out["val_r1"], Const(0, 32)) << pipe_id_out["val_r2"][0:5]
         m.d.comb += [
             flag_z_w.eq(0),
             flag_c_w.eq(0),
             r2_add.eq(pipe_id_out["val_r2"] + Cat(pipe_id_out["incr_r2"], pipe_id_out["incr_r2"][3].replicate(28))),
-            sum_result.eq(Cat(pipe_id_out["val_r1"], Const(0, 1)) + Cat(pipe_id_out["val_r2"], Const(0, 1))),
+            sum_result.eq(sum_wide[0:33]),
             prod_result.eq(pipe_id_out["val_r1"] * pipe_id_out["val_r2"]),
-            shl_result.eq(pipe_id_out["val_r1"] << pipe_id_out["val_r2"][0:5]),
+            shl_result.eq(shl_wide),
             shr_result.eq(Cat(Const(0, 1), pipe_id_out["val_r1"]) >> pipe_id_out["val_r2"][0:5]),
         ]
 
@@ -696,6 +706,8 @@ class Qrisc32(Elaboratable):
             m.d.sync += pipe_zero(pipe_mem_out)
             m.d.sync += pipe_zero(pipe_mem_in0)
             m.d.sync += pipe_zero(pipe_mem_in1)
+            m.d.sync += pipe_zero(pipe_wb_ex)
+            m.d.sync += pipe_zero(pipe_wb_mem)
             m.d.sync += [
                 imem_addr.eq(0),
                 instruction.eq(0),
@@ -722,12 +734,12 @@ class Qrisc32(Elaboratable):
             with m.If(~pipe_stall):
                 m.d.sync += pipe_eq(pipe_id_out, pipe_id_w)
 
-            with m.If(pipe_ex_out["write_reg"]):
-                m.d.sync += rf[pipe_ex_out["dst_r"]].eq(pipe_ex_out["val_dst"])
-            with m.If(pipe_ex_out["incr_r2_enable"]):
-                m.d.sync += rf[pipe_ex_out["src_r2"]].eq(pipe_ex_out["val_r2"])
-            with m.If(pipe_mem_out["write_reg"]):
-                m.d.sync += rf[pipe_mem_out["dst_r"]].eq(pipe_mem_out["val_dst"])
+            with m.If(pipe_wb_ex["write_reg"]):
+                m.d.sync += rf[pipe_wb_ex["dst_r"]].eq(pipe_wb_ex["val_dst"])
+            with m.If(pipe_wb_ex["incr_r2_enable"]):
+                m.d.sync += rf[pipe_wb_ex["src_r2"]].eq(pipe_wb_ex["val_r2"])
+            with m.If(pipe_wb_mem["write_reg"]):
+                m.d.sync += rf[pipe_wb_mem["dst_r"]].eq(pipe_wb_mem["val_dst"])
 
             with m.If(
                 pipe_id_out["and_op"]
@@ -774,5 +786,8 @@ class Qrisc32(Elaboratable):
                 m.d.sync += pipe_eq(pipe_mem_out, pipe_ex_out)
                 with m.If(pipe_ex_out["read_mem"]):
                     m.d.sync += pipe_mem_out["write_reg"].eq(0)
+
+            m.d.sync += pipe_eq(pipe_wb_ex, pipe_ex_out)
+            m.d.sync += pipe_eq(pipe_wb_mem, pipe_mem_out)
 
         return m

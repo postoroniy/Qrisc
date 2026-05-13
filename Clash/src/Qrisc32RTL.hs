@@ -7,7 +7,6 @@
 module Qrisc32RTL where
 
 import Clash.Prelude
-import GHC.Generics (Generic)
 
 type U32 = BitVector 32
 type RegIdx = Index 32
@@ -88,10 +87,13 @@ data AxiOutputs = AxiOutputs
 data Phase
   = FetchAddr
   | FetchResp
+  | Decode
+  | Execute
   | DataReadAddr
   | DataReadResp
   | DataWriteAddrData Bool Bool
   | DataWriteResp
+  | WriteBack
   deriving (Generic, NFDataX)
 
 data Pending
@@ -106,9 +108,20 @@ data CpuState = CpuState
   , flagZ :: Bool
   , flagC :: Bool
   , phase :: Phase
+  , instReg :: U32
   , memAddr :: U32
   , memWData :: U32
   , pending :: Pending
+  , wbNextPc :: U32
+  , wbWriteReg :: Bool
+  , wbDst :: RegIdx
+  , wbValue :: U32
+  , wbIncEn :: Bool
+  , wbIncReg :: RegIdx
+  , wbIncValue :: U32
+  , wbFlagsWrite :: Bool
+  , wbFlagZ :: Bool
+  , wbFlagC :: Bool
   }
   deriving (Generic, NFDataX)
 
@@ -120,9 +133,20 @@ initialState =
     , flagZ = False
     , flagC = False
     , phase = FetchAddr
+    , instReg = 0
     , memAddr = 0
     , memWData = 0
     , pending = NoPending
+    , wbNextPc = 0
+    , wbWriteReg = False
+    , wbDst = 0
+    , wbValue = 0
+    , wbIncEn = False
+    , wbIncReg = 0
+    , wbIncValue = 0
+    , wbFlagsWrite = False
+    , wbFlagZ = False
+    , wbFlagC = False
     }
 
 idleOutputs :: AxiOutputs
@@ -235,8 +259,47 @@ sext15 x =
 low26 :: U32 -> U32
 low26 inst = zeroExtend (slice d25 d0 inst :: BitVector 26)
 
-shiftAmount :: U32 -> Int
-shiftAmount x = fromIntegral (unpack (slice d4 d0 x :: BitVector 5) :: Unsigned 5)
+shiftLeft32 :: U32 -> U32 -> U32
+shiftLeft32 x amount =
+  case (slice d4 d0 amount :: BitVector 5) of
+    0 -> x
+    1 -> x `shiftL` (1 :: Int)
+    2 -> x `shiftL` (2 :: Int)
+    3 -> x `shiftL` (3 :: Int)
+    4 -> x `shiftL` (4 :: Int)
+    5 -> x `shiftL` (5 :: Int)
+    6 -> x `shiftL` (6 :: Int)
+    7 -> x `shiftL` (7 :: Int)
+    8 -> x `shiftL` (8 :: Int)
+    9 -> x `shiftL` (9 :: Int)
+    10 -> x `shiftL` (10 :: Int)
+    11 -> x `shiftL` (11 :: Int)
+    12 -> x `shiftL` (12 :: Int)
+    13 -> x `shiftL` (13 :: Int)
+    14 -> x `shiftL` (14 :: Int)
+    15 -> x `shiftL` (15 :: Int)
+    16 -> x `shiftL` (16 :: Int)
+    17 -> x `shiftL` (17 :: Int)
+    18 -> x `shiftL` (18 :: Int)
+    19 -> x `shiftL` (19 :: Int)
+    20 -> x `shiftL` (20 :: Int)
+    21 -> x `shiftL` (21 :: Int)
+    22 -> x `shiftL` (22 :: Int)
+    23 -> x `shiftL` (23 :: Int)
+    24 -> x `shiftL` (24 :: Int)
+    25 -> x `shiftL` (25 :: Int)
+    26 -> x `shiftL` (26 :: Int)
+    27 -> x `shiftL` (27 :: Int)
+    28 -> x `shiftL` (28 :: Int)
+    29 -> x `shiftL` (29 :: Int)
+    30 -> x `shiftL` (30 :: Int)
+    _ -> x `shiftL` (31 :: Int)
+
+aluShrBy :: U32 -> Int -> (U32, Bool)
+aluShrBy a amount =
+  let value = a `shiftR` amount
+      carry = amount /= 0 && a ! (amount - 1) == 1
+  in (value, carry)
 
 aluAdd :: U32 -> U32 -> (U32, Bool)
 aluAdd a b =
@@ -245,8 +308,85 @@ aluAdd a b =
 
 aluShr :: U32 -> U32 -> (U32, Bool)
 aluShr a b =
-  let shifted = ((a ++# (0 :: BitVector 1)) :: BitVector 33) `shiftR` shiftAmount b
-  in (slice d32 d1 shifted, shifted ! 0 == 1)
+  case (slice d4 d0 b :: BitVector 5) of
+    0 -> aluShrBy a 0
+    1 -> aluShrBy a 1
+    2 -> aluShrBy a 2
+    3 -> aluShrBy a 3
+    4 -> aluShrBy a 4
+    5 -> aluShrBy a 5
+    6 -> aluShrBy a 6
+    7 -> aluShrBy a 7
+    8 -> aluShrBy a 8
+    9 -> aluShrBy a 9
+    10 -> aluShrBy a 10
+    11 -> aluShrBy a 11
+    12 -> aluShrBy a 12
+    13 -> aluShrBy a 13
+    14 -> aluShrBy a 14
+    15 -> aluShrBy a 15
+    16 -> aluShrBy a 16
+    17 -> aluShrBy a 17
+    18 -> aluShrBy a 18
+    19 -> aluShrBy a 19
+    20 -> aluShrBy a 20
+    21 -> aluShrBy a 21
+    22 -> aluShrBy a 22
+    23 -> aluShrBy a 23
+    24 -> aluShrBy a 24
+    25 -> aluShrBy a 25
+    26 -> aluShrBy a 26
+    27 -> aluShrBy a 27
+    28 -> aluShrBy a 28
+    29 -> aluShrBy a 29
+    30 -> aluShrBy a 30
+    _ -> aluShrBy a 31
+
+queueWb :: CpuState -> U32 -> Bool -> RegIdx -> U32 -> Bool -> RegIdx -> U32 -> U32 -> Bool -> Bool -> Bool -> CpuState
+queueWb s nextPc writeEn dst value incEn incReg incBase incDelta flagsWrite zValue cValue =
+  s { phase = WriteBack
+    , pending = NoPending
+    , wbNextPc = nextPc
+    , wbWriteReg = writeEn
+    , wbDst = dst
+    , wbValue = value
+    , wbIncEn = incEn
+    , wbIncReg = incReg
+    , wbIncValue = incBase + incDelta
+    , wbFlagsWrite = flagsWrite
+    , wbFlagZ = zValue
+    , wbFlagC = cValue
+    }
+
+queueWbValue :: CpuState -> U32 -> Bool -> RegIdx -> U32 -> Bool -> RegIdx -> U32 -> Bool -> Bool -> Bool -> CpuState
+queueWbValue s nextPc writeEn dst value incEn incReg incValue flagsWrite zValue cValue =
+  s { phase = WriteBack
+    , pending = NoPending
+    , wbNextPc = nextPc
+    , wbWriteReg = writeEn
+    , wbDst = dst
+    , wbValue = value
+    , wbIncEn = incEn
+    , wbIncReg = incReg
+    , wbIncValue = incValue
+    , wbFlagsWrite = flagsWrite
+    , wbFlagZ = zValue
+    , wbFlagC = cValue
+    }
+
+commitWb :: CpuState -> CpuState
+commitWb s@CpuState{..} =
+  let regsWrite = if wbWriteReg then writeReg wbDst wbValue regs else regs
+      regsFinal = if wbIncEn then writeReg wbIncReg wbIncValue regsWrite else regsWrite
+      flagZFinal = if wbFlagsWrite then wbFlagZ else flagZ
+      flagCFinal = if wbFlagsWrite then wbFlagC else flagC
+  in s { pc = wbNextPc
+       , regs = regsFinal
+       , flagZ = flagZFinal
+       , flagC = flagCFinal
+       , phase = FetchAddr
+       , pending = NoPending
+       }
 
 decodeExecute :: CpuState -> U32 -> CpuState
 decodeExecute s@CpuState{..} inst =
@@ -261,32 +401,22 @@ decodeExecute s@CpuState{..} inst =
       dstVal = regAt regs dst
       imm16 = slice d20 d5 inst :: BitVector 16
       off15 = slice d24 d10 inst :: BitVector 15
-      useRegOffset = inst ! 25 == 1
+      useRegOffset = inst ! (25 :: Int) == 1
       incCode = slice d24 d22 inst :: BitVector 3
       incDelta = incrWord incCode
       defaultIncEn = incrEnabled incCode
       offset = if useRegOffset then r2 else sext15 off15
       seqPc = pc + 4
-      normal rs' z' c' = s { pc = seqPc, regs = rs', flagZ = z', flagC = c', phase = FetchAddr, pending = NoPending }
-      normalKeepFlags rs' = normal rs' flagZ flagC
       writeMaybe doWrite value incEn =
-        let rs1 = if doWrite
-                    then commitWriteThenInc dst value incEn src2 r2 incDelta regs
-                    else commitIncOnly incEn src2 r2 incDelta regs
-        in normalKeepFlags rs1
+        queueWb s seqPc doWrite dst value incEn src2 r2 incDelta False False False
       jumpState target incEn writeRet =
-        let rs1 = if writeRet
-                    then commitWriteThenInc dst pc incEn src2 r2 incDelta regs
-                    else commitIncOnly incEn src2 r2 incDelta regs
-        in s { pc = target, regs = rs1, phase = FetchAddr, pending = NoPending }
+        queueWb s target writeRet dst pc incEn src2 r2 incDelta False False False
       branch cond =
         let target = pc + offset
-            rs1 = commitIncOnly useRegOffset src2 r2 incDelta regs
-        in s { pc = if cond then target else seqPc, regs = rs1, phase = FetchAddr, pending = NoPending }
+        in queueWb s (if cond then target else seqPc) False dst 0 useRegOffset src2 r2 incDelta False False False
       ldrf cond =
         let value = if cond then r1 else r2
-            rs1 = commitWriteThenInc dst value defaultIncEn src2 r2 incDelta regs
-        in normalKeepFlags rs1
+        in queueWb s seqPc True dst value defaultIncEn src2 r2 incDelta False False False
       memRead =
         s { pc = seqPc
           , phase = DataReadAddr
@@ -300,6 +430,8 @@ decodeExecute s@CpuState{..} inst =
           , memWData = dstVal
           , pending = StorePending useRegOffset src2 r2 incDelta
           }
+      aluResult value carry =
+        queueWb s seqPc True dst value defaultIncEn src2 r2 incDelta True (value == 0) carry
   in case op of
       0x0 ->
         case mode of
@@ -328,61 +460,47 @@ decodeExecute s@CpuState{..} inst =
         case alu of
           0 ->
             let value = r1 .&. r2
-                rs1 = commitWriteThenInc dst value defaultIncEn src2 r2 incDelta regs
-            in normal rs1 (value == 0) False
+            in aluResult value False
           1 ->
             let value = r1 .|. r2
-                rs1 = commitWriteThenInc dst value defaultIncEn src2 r2 incDelta regs
-            in normal rs1 (value == 0) False
+            in aluResult value False
           2 ->
             let value = r1 `xor` r2
-                rs1 = commitWriteThenInc dst value defaultIncEn src2 r2 incDelta regs
-            in normal rs1 (value == 0) False
+            in aluResult value False
           3 ->
             let (value, carry) = aluAdd r1 r2
-                rs1 = commitWriteThenInc dst value defaultIncEn src2 r2 incDelta regs
-            in normal rs1 (value == 0) carry
+            in aluResult value carry
           4 ->
             let value = r1 * r2
-                rs1 = commitWriteThenInc dst value defaultIncEn src2 r2 incDelta regs
-            in normal rs1 (value == 0) False
+            in aluResult value False
           5 ->
-            let value = r1 `shiftL` shiftAmount r2
-                rs1 = commitWriteThenInc dst value defaultIncEn src2 r2 incDelta regs
-            in normal rs1 (value == 0) False
+            let value = shiftLeft32 r1 r2
+            in aluResult value False
           6 ->
             let (value, carry) = aluShr r1 r2
-                rs1 = commitWriteThenInc dst value defaultIncEn src2 r2 incDelta regs
-            in normal rs1 (value == 0) carry
+            in aluResult value carry
           _ ->
-            let rs1 = commitIncOnly defaultIncEn src2 r2 incDelta regs
-            in normal rs1 (r1 == r2) (r1 < r2)
+            queueWb s seqPc False dst 0 defaultIncEn src2 r2 incDelta True (r1 == r2) (r1 < r2)
       0x5 ->
         case mode of
           0 -> ldrf flagZ
           1 -> ldrf (not flagZ)
           2 -> ldrf flagC
           _ -> ldrf (not flagC)
-      _ -> s { pc = seqPc, phase = FetchAddr, pending = NoPending }
+      _ -> queueWb s seqPc False dst 0 defaultIncEn src2 r2 incDelta False False False
 
 commitLoad :: CpuState -> U32 -> CpuState
 commitLoad s@CpuState{..} value =
   case pending of
     LoadPending dst incEn incReg incBase incDelta ->
-      s { regs = commitWriteThenInc dst value incEn incReg incBase incDelta regs
-        , phase = FetchAddr
-        , pending = NoPending
-        }
+      queueWb s pc True dst value incEn incReg incBase incDelta False False False
     _ -> s { phase = FetchAddr, pending = NoPending }
 
 commitStore :: CpuState -> CpuState
 commitStore s@CpuState{..} =
   case pending of
     StorePending incEn incReg incBase incDelta ->
-      s { regs = commitIncOnly incEn incReg incBase incDelta regs
-        , phase = FetchAddr
-        , pending = NoPending
-        }
+      queueWb s pc False 0 0 incEn incReg incBase incDelta False False False
     _ -> s { phase = FetchAddr, pending = NoPending }
 
 step :: CpuState -> AxiInputs -> (CpuState, AxiOutputs)
@@ -393,7 +511,12 @@ step s@CpuState{..} i =
           s' = if bitSet (iArReady i) then s { phase = FetchResp } else s
       in (s', out)
     FetchResp ->
-      let s' = if bitSet (iRValid i) then decodeExecute s (iRData i) else s
+      let s' = if bitSet (iRValid i) then s { instReg = iRData i, phase = Decode } else s
+      in (s', idleOutputs)
+    Decode ->
+      (s { phase = Execute }, idleOutputs)
+    Execute ->
+      let s' = decodeExecute s instReg
       in (s', idleOutputs)
     DataReadAddr ->
       let out = idleOutputs { axi_data_araddr = memAddr, axi_data_arvalid = 1 }
@@ -427,10 +550,12 @@ step s@CpuState{..} i =
     DataWriteResp ->
       let s' = if bitSet (dBValid i) then commitStore s else s
       in (s', idleOutputs)
+    WriteBack ->
+      (commitWb s, idleOutputs)
 
 {-# ANN topEntity
   (Synthesize
-    { t_name = "qrisc32_clash"
+    { t_name = "qrisc32"
     , t_inputs =
       [ PortName "clk"
       , PortName "areset"

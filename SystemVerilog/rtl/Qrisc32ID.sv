@@ -21,26 +21,52 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 `default_nettype none
 
-module qrisc32_ID(
+module Qrisc32ID(
         input logic         clk,areset,
         input logic[31:0]   instruction,
         input logic[31:0]   pc,
 
         input logic         pipe_stall,//feed back from MEM stage
-        input risc_pack::pipe_struct_t   pipe_wb_mem,//for memory read
-        input risc_pack::pipe_struct_t   pipe_wb_ex,//for R2 register and ALU operations only
+        input Qrisc_pack::pipe_struct_t   pipe_fwd_mem,//for memory read forwarding
+        input Qrisc_pack::pipe_struct_t   pipe_fwd_ex,//for EX forwarding
+        input Qrisc_pack::pipe_struct_t   pipe_wb_mem,//registered MEM writeback forwarding
+        input Qrisc_pack::pipe_struct_t   pipe_wb_ex,//registered EX writeback forwarding
+        input logic[31:0]   rf_val_r1,
+        input logic[31:0]   rf_val_r2,
+        input logic[31:0]   rf_val_dst,
 
-        output risc_pack::pipe_struct_t  pipe_id_out,
+        output Qrisc_pack::pipe_struct_t  pipe_id_out,
         input logic               verbose
     );
 
-    risc_pack::pipe_struct_t     pipe_id_out_w;
-    logic[31:0]       rf[32];//32 regs width is 32
+    Qrisc_pack::pipe_struct_t     pipe_id_out_w;
     logic[31:0]       offset_w;
     logic[31:0]       nop_counter;
     logic[31:0]       jmp_counter;
     logic[31:0]       alu_counter;
     logic[31:0]       oth_counter;
+
+    function automatic logic[31:0] forwarded_value(
+        input logic[4:0] reg_idx,
+        input logic[31:0] rf_value
+    );
+        begin
+            if(pipe_fwd_mem.write_reg && pipe_fwd_mem.dst_r==reg_idx)
+                forwarded_value = pipe_fwd_mem.val_dst;
+            else if(pipe_fwd_ex.write_reg && pipe_fwd_ex.dst_r==reg_idx)
+                forwarded_value = pipe_fwd_ex.val_dst;
+            else if(pipe_fwd_ex.incr_r2_enable && pipe_fwd_ex.src_r2==reg_idx)
+                forwarded_value = pipe_fwd_ex.val_r2;
+            else if(pipe_wb_mem.write_reg && pipe_wb_mem.dst_r==reg_idx)
+                forwarded_value = pipe_wb_mem.val_dst;
+            else if(pipe_wb_ex.write_reg && pipe_wb_ex.dst_r==reg_idx)
+                forwarded_value = pipe_wb_ex.val_dst;
+            else if(pipe_wb_ex.incr_r2_enable && pipe_wb_ex.src_r2==reg_idx)
+                forwarded_value = pipe_wb_ex.val_r2;
+            else
+                forwarded_value = rf_value;
+        end
+    endfunction
 
     //comb part
     always_comb begin
@@ -70,35 +96,9 @@ module qrisc32_ID(
         pipe_id_out_w.jmpc      = 0;
         pipe_id_out_w.jmpnc     = 0;
 
-        pipe_id_out_w.val_r1    =  (pipe_wb_mem.write_reg && pipe_wb_mem.dst_r==pipe_id_out_w.src_r1)?
-                                    pipe_wb_mem.val_dst://forward from memory read
-                                    //(pipe_wb_mem.incr_r2_enable && pipe_wb_mem.src_r2==pipe_id_out_w.src_r1)?
-                                    //pipe_wb_mem.val_r2://forward from mem stage R2 register
-                                    (pipe_wb_ex.write_reg && pipe_wb_ex.dst_r==pipe_id_out_w.src_r1)?
-                                    pipe_wb_ex.val_dst://forward from execution stage DST register
-                                    (pipe_wb_ex.incr_r2_enable && pipe_wb_ex.src_r2==pipe_id_out_w.src_r1)?
-                                    pipe_wb_ex.val_r2://forward from execution stage R2 register
-                                    rf[pipe_id_out_w.src_r1];//otherwise from register file
-
-        pipe_id_out_w.val_r2    =  (pipe_wb_mem.write_reg && pipe_wb_mem.dst_r==pipe_id_out_w.src_r2)?
-                                    pipe_wb_mem.val_dst://forward from memory read
-                                    //(pipe_wb_mem.incr_r2_enable && pipe_wb_mem.src_r2==pipe_id_out_w.src_r2)?
-                                    //pipe_wb_mem.val_r2://forward from mem stage R2 register
-                                    (pipe_wb_ex.write_reg && pipe_wb_ex.dst_r==pipe_id_out_w.src_r2)?
-                                    pipe_wb_ex.val_dst://forward from execution stage DST register
-                                    (pipe_wb_ex.incr_r2_enable && pipe_wb_ex.src_r2==pipe_id_out_w.src_r2)?
-                                    pipe_wb_ex.val_r2://forward from execution stage R2 register
-                                    rf[pipe_id_out_w.src_r2];//otherwise from register file
-
-        pipe_id_out_w.val_dst    = (pipe_wb_mem.write_reg && pipe_wb_mem.dst_r==pipe_id_out_w.dst_r)?
-                                    pipe_wb_mem.val_dst://forward from memory read
-                                    //(pipe_wb_mem.incr_r2_enable && pipe_wb_mem.src_r2==pipe_id_out_w.dst_r)?
-                                    //pipe_wb_mem.val_r2://forward from mem stage R2 register
-                                    (pipe_wb_ex.write_reg && pipe_wb_ex.dst_r==pipe_id_out_w.dst_r)?
-                                    pipe_wb_ex.val_dst://forward from execution stage DST register
-                                    (pipe_wb_ex.incr_r2_enable && pipe_wb_ex.src_r2==pipe_id_out_w.dst_r)?
-                                    pipe_wb_ex.val_r2://forward from execution stage R2 register
-                                    rf[pipe_id_out_w.dst_r];//otherwise from register file
+        pipe_id_out_w.val_r1    = forwarded_value(pipe_id_out_w.src_r1, rf_val_r1);
+        pipe_id_out_w.val_r2    = forwarded_value(pipe_id_out_w.src_r2, rf_val_r2);
+        pipe_id_out_w.val_dst   = forwarded_value(pipe_id_out_w.dst_r,  rf_val_dst);
 
         offset_w = (instruction[25])?pipe_id_out_w.val_r2:{{17{instruction[24]}},instruction[24:10]};//17 bit sign + 15 bit offset
 
@@ -115,7 +115,7 @@ module qrisc32_ID(
 
         case(instruction[31:28])
             //load and store
-            risc_pack::LDR:
+            Qrisc_pack::LDR:
             unique case(instruction[27:26])
                 2'b00: begin
                         pipe_id_out_w.write_reg = (pipe_id_out_w.dst_r!=pipe_id_out_w.src_r1)?1:0;//write from reg src1 to reg dst
@@ -140,7 +140,7 @@ module qrisc32_ID(
                     end
             endcase
 
-            risc_pack::STR:
+            Qrisc_pack::STR:
             case(instruction[27:26])
                 //2'b11:
                 default: begin
@@ -151,10 +151,10 @@ module qrisc32_ID(
             endcase
 
             //jumps
-            risc_pack::JMPUNC:
+            Qrisc_pack::JMPUNC:
             unique case(instruction[27:26])
                 2'b00: begin
-                    pipe_id_out_w.val_r1        = instruction[25:0];
+                    pipe_id_out_w.val_r1        = {6'd0, instruction[25:0]};
                     pipe_id_out_w.val_r2        = '0;//no offset
                     pipe_id_out_w.incr_r2_enable= 0;
                     pipe_id_out_w.jmpunc        = 1;
@@ -184,7 +184,7 @@ module qrisc32_ID(
                 end
             endcase
 
-            risc_pack::JMPF:
+            Qrisc_pack::JMPF:
             unique case(instruction[27:26])
                 2'b00:begin
                 //jmpz
@@ -217,7 +217,7 @@ module qrisc32_ID(
             endcase
 
             //Arithmetic
-            risc_pack::ALU:
+            Qrisc_pack::ALU:
             unique case(instruction[27:25])
                 3'd0: begin
                     pipe_id_out_w.write_reg = 1;
@@ -253,7 +253,7 @@ module qrisc32_ID(
                 end
             endcase
 
-            risc_pack::LDRF:
+            Qrisc_pack::LDRF:
             unique case(instruction[27:26])
                 2'b00:begin
                 //ldrz
@@ -290,8 +290,6 @@ module qrisc32_ID(
     always_ff@(posedge clk or posedge areset)
     if(areset)begin
         pipe_id_out<='0;
-        for(int i=0;i<32;i++)
-             rf[i]<='0;
         nop_counter<='0;
         jmp_counter<='0;
         alu_counter<='0;
@@ -299,9 +297,9 @@ module qrisc32_ID(
     end else begin
         if(instruction==0)
             nop_counter<=nop_counter+1;
-        else if(instruction[31:28]==risc_pack::JMPUNC || instruction[31:28]==risc_pack::JMPF)
+        else if(instruction[31:28]==Qrisc_pack::JMPUNC || instruction[31:28]==Qrisc_pack::JMPF)
             jmp_counter<=jmp_counter+1;
-        else if(instruction[31:28]==risc_pack::ALU)
+        else if(instruction[31:28]==Qrisc_pack::ALU)
             alu_counter<=alu_counter+1;
         else
             oth_counter<=oth_counter+1;
@@ -309,24 +307,12 @@ module qrisc32_ID(
         if(~pipe_stall)
             pipe_id_out<=pipe_id_out_w;
 
-        if(pipe_wb_ex.write_reg)//from ex stage DST register
-            rf[pipe_wb_ex.dst_r]<=pipe_wb_ex.val_dst;
-
-        if(pipe_wb_ex.incr_r2_enable)//from ex stage R2 register
-            rf[pipe_wb_ex.src_r2]<=pipe_wb_ex.val_r2;
-
-        if(pipe_wb_mem.write_reg)//from memory read stage
-            rf[pipe_wb_mem.dst_r]<=pipe_wb_mem.val_dst;
-
-        //if(pipe_wb_mem.incr_r2_enable)//from mem stage R2 register
-        //    rf[pipe_wb_mem.src_r2]<=pipe_wb_mem.val_r2;
-
 //synthesys translate_off
         if(verbose) begin
             if(~pipe_stall) begin
                 case(instruction[31:28])
                     //load and store
-                    risc_pack::LDR:
+                    Qrisc_pack::LDR:
                     unique case(instruction[27:26])
                         2'b00:$display("LDR R%0d, R%0d, R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                         2'b01:$display("LDRH R%0d,0x%x",pipe_id_out_w.dst_r,instruction[20:5]);
@@ -334,13 +320,13 @@ module qrisc32_ID(
                         2'b11:$display("LDRP R%0d,[R%0d +%0d],R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,$signed(offset_w),pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                     endcase
 
-                    risc_pack::STR:
+                    Qrisc_pack::STR:
                     case(instruction[27:26])
                         default:$display("STR R%0d,[R%0d +%0d],R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,$signed(offset_w),pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                     endcase
 
                     //jumps
-                    risc_pack::JMPUNC:
+                    Qrisc_pack::JMPUNC:
                     unique case(instruction[27:26])
                         2'b00:$display("JMP 0x%0x",instruction[25:0]);
                         2'b01://relative jump
@@ -351,7 +337,7 @@ module qrisc32_ID(
                         $display("RET to 0x%0x",pipe_id_out_w.val_dst);
                     endcase
 
-                    risc_pack::JMPF:
+                    Qrisc_pack::JMPF:
                     unique case(instruction[27:26])
                         2'b00://jmpz
                             $display("JMPZ PC 0x%0x + offset %0d",pc,$signed(offset_w));
@@ -364,7 +350,7 @@ module qrisc32_ID(
                     endcase
 
                     //Arithmetic
-                    risc_pack::ALU:
+                    Qrisc_pack::ALU:
                     unique case(instruction[27:25])
                         3'd0:$display("AND R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                         3'd1:$display("OR  R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
@@ -376,7 +362,7 @@ module qrisc32_ID(
                         3'd7:$display("CMP R%0d with R%0d+%d",pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                     endcase
 
-                    risc_pack::LDRF:
+                    Qrisc_pack::LDRF:
                     unique case(instruction[27:26])
                         2'b00://ldrz
                             $display("LDRZ R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));

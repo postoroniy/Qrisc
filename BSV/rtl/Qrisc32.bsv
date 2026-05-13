@@ -23,7 +23,7 @@
 // Title       : qrisc32
 // Design      : qrisc32
 // Author      : vinogradov@opencores.org
-//4 stages risc cpu
+//5 stages risc cpu: IF, ID, EX, MEM, WB
 //with 2 AXI4 interfaces:
 // - Instruction Read AXI4 interface
 // - Data Read/Write AXI4 interface
@@ -34,10 +34,12 @@ import Vector :: *;
 import Semi_FIFOF::*;
 
 import Qrisc_pack::*;
-import qrisc32_IF::*;
-import qrisc32_ID::*;
-import qrisc32_EX::*;
-import qrisc32_MEM::*;
+import Qrisc32IF::*;
+import Qrisc32ID::*;
+import Qrisc32EX::*;
+import Qrisc32MEM::*;
+import Qrisc32RF::*;
+import Qrisc32WB::*;
 
 module qrisc32(Qrisc_if #(1, 32,32, 1));
 
@@ -46,6 +48,9 @@ module qrisc32(Qrisc_if #(1, 32,32, 1));
     FIFOF#(Pipe_s) exeFifo <- mkFIFOF;
     FIFOF#(Pipe_s) wbExFifo <- mkFIFOF;
     FIFOF#(Pipe_s) wbMemFifo <- mkFIFOF;
+
+    RF_IFC registerFile <- qrisc32_RF;
+    WB_IFC writebackStage <- qrisc32_WB(wbExFifo, wbMemFifo, registerFile);
 
     MEM_ifc#(1, 32, 32, 1) memStage <- qrisc32_MEM(1, 32, 32, 1, exeFifo, wbMemFifo);
     IF_ifc#(1, 32, 32, 1) instructionFetchStage <- qrisc32_IF(
@@ -61,8 +66,8 @@ module qrisc32(Qrisc_if #(1, 32,32, 1));
     Empty instructionDecodeStage <- qrisc32_ID(
         instructionFifo,
         decodeFifo,
-        wbExFifo,
-        wbMemFifo,
+        registerFile,
+        writebackStage,
         id_flush
     );
     EX_ifc instructionExecuteStage <- qrisc32_EX(decodeFifo, exeFifo, wbExFifo);

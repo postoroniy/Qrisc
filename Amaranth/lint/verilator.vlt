@@ -1,0 +1,12 @@
+`verilator_config
+
+// Amaranth-generated RTL uses declaration initializers and generated cases.
+lint_off -rule PROCASSINIT -file "*qrisc32.v"
+lint_off -rule CASEINCOMPLETE -file "*qrisc32.v"
+
+// Generated comparisons to zero and state constants are intentional.
+lint_off -rule WIDTHTRUNC -file "*qrisc32.v" -match "Logical operator LOGNOT expects 1 bit*"
+lint_off -rule WIDTHEXPAND -file "*qrisc32.v"
+
+// AXI response/user fields are part of the shared port contract but ignored by the core.
+lint_off -rule UNUSEDSIGNAL -file "*qrisc32.v"

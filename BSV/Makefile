@@ -4,6 +4,7 @@ DISTRO ?= ${HOME}/projects/bluespec/bsc/inst/lib
 BSV_LIBS ?= ${HOME}/projects/bluespec/Piccolo
 
 BSC = bsc
+VERILATOR ?= verilator
 RTL_DIR = rtl
 TB_DIR = tb
 BUILD_DIR = build
@@ -23,6 +24,10 @@ VCD_DIR ?= $(BDIR)/vcd
 BSC_COMPILATION_FLAGS ?= -keep-fires -aggressive-conditions -no-warn-action-shadowing -no-show-timestamps -check-assert \
 -suppress-warnings G0020 +RTS -K128M -RTS -show-range-conflict -u -elab -bdir $(BDIR)
 BSC_SIM_FLAGS ?= $(BSC_COMPILATION_FLAGS) -simdir $(SIMDIR)
+BSC_SOURCE_LINT_FLAGS ?= -keep-fires -aggressive-conditions -no-show-timestamps -check-assert \
++RTS -K128M -RTS -show-range-conflict -u -elab -bdir $(BDIR)
+VERILATOR_LINT_FLAGS ?= --lint-only -Wall
+LINT_WAIVERS ?= lint/verilator.vlt
 
 # Library sources (full paths)
 LIB_SRCS := \
@@ -38,13 +43,15 @@ LIB_OBJS := $(addprefix $(BDIR)/, $(patsubst %.bsv,%.bo,$(LIB_SRCS_NAMES)))
 # Top-level Bluespec sources and final verilog output
 RTL_SOURCES = \
 	$(RTL_DIR)/Qrisc_pack.bsv \
-	$(RTL_DIR)/qrisc32_IF.bsv \
-	$(RTL_DIR)/qrisc32_ID.bsv \
-	$(RTL_DIR)/qrisc32_EX.bsv \
-	$(RTL_DIR)/qrisc32_MEM.bsv \
-	$(RTL_DIR)/qrisc32.bsv
-EXPERIMENTAL_RTL_SOURCES = $(RTL_DIR)/qrisc32_RF.bsv
-BSV_SOURCES = $(RTL_DIR)/qrisc32.bsv
+	$(RTL_DIR)/Qrisc32IF.bsv \
+	$(RTL_DIR)/Qrisc32ID.bsv \
+	$(RTL_DIR)/Qrisc32EX.bsv \
+	$(RTL_DIR)/Qrisc32MEM.bsv \
+	$(RTL_DIR)/Qrisc32RF.bsv \
+	$(RTL_DIR)/Qrisc32WB.bsv \
+	$(RTL_DIR)/Qrisc32.bsv
+BSV_SOURCES = $(RTL_DIR)/Qrisc32.bsv
+BSV_TOP = qrisc32
 VERILOG_OUTPUT = $(VDIR)/qrisc32.v
 
 SMOKE_HEX = $(HEXDIR)/smoke_1024.hex
@@ -72,19 +79,26 @@ lib: $(LIB_OBJS)
 # Compile intermediate Bluespec files.
 compile: lib $(RTL_SOURCES) | $(BDIR) $(IDIR) $(VDIR)
 	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/Qrisc_pack.bsv
-	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/qrisc32_IF.bsv
-	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/qrisc32_ID.bsv
-	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/qrisc32_EX.bsv
-	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/qrisc32_MEM.bsv
+	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/Qrisc32IF.bsv
+	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/Qrisc32ID.bsv
+	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/Qrisc32EX.bsv
+	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/Qrisc32MEM.bsv
+	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/Qrisc32RF.bsv
+	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(RTL_DIR)/Qrisc32WB.bsv
 
-# Build final Verilog output. The top-level module is named after the source file (qrisc32).
+# Build final Verilog output. Keep the public top module name stable.
 $(VERILOG_OUTPUT): $(RTL_SOURCES) | $(BDIR) $(VDIR) $(IDIR) $(SDIR) $(SIMDIR) compile
 	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) \
-		-remove-dollar -g $(basename $(notdir $(BSV_SOURCES))) -verilog $(BSV_SOURCES)
+		-remove-dollar -g $(BSV_TOP) -verilog $(BSV_SOURCES)
 
 synth: $(VERILOG_OUTPUT)
 	mkdir -p $(BDIR)/yosys
 	yosys -s ys
+
+lint: BSC_COMPILATION_FLAGS = $(BSC_SOURCE_LINT_FLAGS)
+lint: $(VERILOG_OUTPUT) $(LINT_WAIVERS)
+	$(VERILATOR) $(VERILATOR_LINT_FLAGS) $(LINT_WAIVERS) \
+		$(DISTRO)/Verilog/FIFO1.v $(DISTRO)/Verilog/FIFO2.v $(VERILOG_OUTPUT) --top-module qrisc32
 
 clean:
 	rm -rf *.bo *.ba *.v *.cxx *.h *.o *.so info sim verilog $(BDIR)
@@ -141,4 +155,4 @@ axi: lib compile $(AXI_HEX) | $(SDIR) $(BDIR) $(IDIR) $(SIMDIR) $(VCD_DIR)
 	grep -q 'PASS: AXI smoke dmem\[0\] = 12' "$$log"; \
 	test -s "$$vcd"
 
-.PHONY: all clean compile lib synth smoke flags isa axi
+.PHONY: all clean compile lib synth lint smoke flags isa axi

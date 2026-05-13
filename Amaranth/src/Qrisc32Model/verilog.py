@@ -17,7 +17,7 @@ def emit(path: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 1:
-        print("usage: python -m qrisc32_model.verilog <output.v>", file=sys.stderr)
+        print("usage: python -m Qrisc32Model.verilog <output.v>", file=sys.stderr)
         return 2
     emit(Path(args[0]))
     return 0

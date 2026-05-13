@@ -4,7 +4,7 @@ import RegFile :: * ;
 import FIFOF :: *;
 import Vector :: *;
 import Semi_FIFOF::*;
-import qrisc32 :: *;
+import Qrisc32 :: *;
 
 // import GetPut       :: *;
 // import ClientServer :: *;

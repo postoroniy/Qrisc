@@ -23,7 +23,7 @@
 // Title       : qrisc32
 // Design      : qrisc32
 // Author      : vinogradov@opencores.org
-//4 stages risc cpu
+//5 stages risc cpu
 //with 2 AXI4 interfaces:
 // - Instruction Read AXI4 interface
 // - Data Read/Write AXI4 interface
@@ -416,21 +416,36 @@ module qrisc32(
         .bready(axi_data_bready)
     );
 
-    risc_pack::pipe_struct_t
+    Qrisc_pack::pipe_struct_t
                 pipe_id_out,//I decode
                 pipe_ex_out,//Ex
-                pipe_mem_out;//MEM access
+                pipe_mem_out,//MEM access
+                pipe_wb_ex,//WB from EX result and SRC2 increment
+                pipe_wb_mem;//WB from MEM result
 
     logic[31:0]  instruction,pc;
     logic        new_address_valid_ex;
     logic[31:0]  new_address_ex;
-
-    logic        new_address_valid_mem;
-    logic[31:0]  new_address_mem;
+    logic[31:0]  rf_val_r1;
+    logic[31:0]  rf_val_r2;
+    logic[31:0]  rf_val_dst;
 
     logic        pipe_stall;
 
-    qrisc32_IF  qrisc32_IF(
+    Qrisc32RF qrisc32_RF(
+        .clk(clk),
+        .areset(areset),
+        .src_r1_addr(instruction[9:5]),
+        .src_r2_addr(instruction[14:10]),
+        .dst_addr(instruction[4:0]),
+        .src_r1_data(rf_val_r1),
+        .src_r2_data(rf_val_r2),
+        .dst_data(rf_val_dst),
+        .pipe_wb_ex(pipe_wb_ex),
+        .pipe_wb_mem(pipe_wb_mem)
+    );
+
+    Qrisc32IF qrisc32_IF(
         .clk(clk),
         .areset(areset),
         .pipe_stall(pipe_stall),
@@ -442,19 +457,24 @@ module qrisc32(
         .pc(pc)
     );
 
-    qrisc32_ID  qrisc32_ID(
+    Qrisc32ID qrisc32_ID(
         .clk(clk),
         .areset(areset),
         .pipe_stall(pipe_stall),
         .instruction(instruction),
         .pc(pc),
-        .pipe_wb_mem(pipe_mem_out),//for memory read
-        .pipe_wb_ex(pipe_ex_out),//for R2 register and ALU operations only
+        .pipe_fwd_mem(pipe_mem_out),//for memory read forwarding
+        .pipe_fwd_ex(pipe_ex_out),//for R2 register and ALU forwarding
+        .pipe_wb_mem(pipe_wb_mem),//registered MEM writeback forwarding
+        .pipe_wb_ex(pipe_wb_ex),//registered EX writeback forwarding
+        .rf_val_r1(rf_val_r1),
+        .rf_val_r2(rf_val_r2),
+        .rf_val_dst(rf_val_dst),
         .pipe_id_out(pipe_id_out),
         .verbose(verbose)
     );
 
-    qrisc32_EX  qrisc32_EX(
+    Qrisc32EX qrisc32_EX(
         .clk(clk),
         .areset(areset),
         .pipe_stall(pipe_stall),
@@ -464,7 +484,7 @@ module qrisc32(
         .new_address(new_address_ex)
     );
 
-    qrisc32_MEM qrisc32_MEM(
+    Qrisc32MEM qrisc32_MEM(
         .clk(clk),
         .areset(areset),
         .pipe_mem_in(pipe_ex_out),
@@ -473,6 +493,15 @@ module qrisc32(
         .pipe_mem_out(pipe_mem_out),
         .pipe_stall(pipe_stall),
         .verbose(verbose)
+    );
+
+    Qrisc32WB qrisc32_WB(
+        .clk(clk),
+        .areset(areset),
+        .pipe_wb_ex_in(pipe_ex_out),
+        .pipe_wb_mem_in(pipe_mem_out),
+        .pipe_wb_ex_out(pipe_wb_ex),
+        .pipe_wb_mem_out(pipe_wb_mem)
     );
 
 endmodule

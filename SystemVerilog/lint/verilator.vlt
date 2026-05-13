@@ -1,0 +1,23 @@
+`verilator_config
+
+// qrisc32_mem_port intentionally lives beside the qrisc32 top.
+lint_off -rule DECLFILENAME -file "*Qrisc32.sv" -match "Filename 'Qrisc32' does not match IFACE name: 'qrisc32_mem_port'*"
+
+// ISA encoding aliases are public package constants; most are not used by RTL.
+lint_off -rule UNUSEDPARAM -file "*Qrisc_pack.sv"
+
+// Pipeline structs and AXI ports intentionally carry fields unused by a given stage.
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32ID.sv" -match "Bits of signal are not used: 'pipe_wb_mem'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32ID.sv" -match "Bits of signal are not used: 'pipe_wb_ex'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32ID.sv" -match "Bits of signal are not used: 'pipe_fwd_mem'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32ID.sv" -match "Bits of signal are not used: 'pipe_fwd_ex'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32MEM.sv" -match "Bits of signal are not used: 'pipe_mem_in1'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32RF.sv" -match "Bits of signal are not used: 'pipe_wb_ex'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32RF.sv" -match "Bits of signal are not used: 'pipe_wb_mem'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32.sv" -match "Signal is not used: 'rid'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32.sv" -match "Signal is not used: 'rresp'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32.sv" -match "Signal is not used: 'rlast'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32.sv" -match "Signal is not used: 'ruser'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32.sv" -match "Signal is not used: 'bid'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32.sv" -match "Signal is not used: 'bresp'*"
+lint_off -rule UNUSEDSIGNAL -file "*Qrisc32.sv" -match "Signal is not used: 'buser'*"

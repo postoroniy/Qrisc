@@ -1,0 +1,8 @@
+`verilator_config
+
+// BSC generated Verilog and runtime FIFOs expose internal scheduling/debug nets.
+lint_off -rule WIDTHTRUNC -file "*/bsc/inst/lib/Verilog/FIFO2.v"
+lint_off -rule UNUSEDSIGNAL -file "*/bsc/inst/lib/Verilog/FIFO2.v"
+lint_off -rule UNUSEDSIGNAL -file "*qrisc32.v"
+lint_off -rule SYNCASYNCNET -file "*/bsc/inst/lib/Verilog/FIFO2.v"
+lint_off -rule SYNCASYNCNET -file "*qrisc32.v"

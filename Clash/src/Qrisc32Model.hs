@@ -6,7 +6,6 @@ module Qrisc32Model
 
 import Data.Bits
 import Data.Char (isSpace)
-import Data.List (foldl')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Numeric (readHex)
@@ -199,9 +198,9 @@ execAlu alu dst _src2 incr incTarget r1 r2 cpu =
         let value = u32 (r1 `shiftL` (r2 .&. 31))
         in inc $ write value cpu { flagC = False, flagZ = value == 0 }
       6 ->
-        let shift = r2 .&. 31
+        let shiftAmt = r2 .&. 31
             combined = (r1 `shiftL` 1) .&. 0x1ffffffff
-            shr = combined `shiftR` shift
+            shr = combined `shiftR` shiftAmt
             value = (shr `shiftR` 1) .&. mask32
         in inc $ write value cpu { flagC = testBit shr 0, flagZ = value == 0 }
       _ -> inc cpu { flagZ = r1 == r2, flagC = r1 < r2 }

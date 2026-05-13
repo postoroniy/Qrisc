@@ -1,0 +1,6 @@
+`verilator_config
+
+// Clash-generated RTL exposes unused AXI response fields and intermediate nets.
+lint_off -rule UNUSEDSIGNAL -file "*qrisc32.v"
+lint_off -rule PROCASSINIT -file "*qrisc32.v"
+lint_off -rule WIDTHTRUNC -file "*qrisc32.v"

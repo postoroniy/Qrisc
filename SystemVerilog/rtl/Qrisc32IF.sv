@@ -21,7 +21,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 `default_nettype none
 
-module qrisc32_IF(
+module Qrisc32IF(
     input logic       clk,areset,
     qrisc32_mem_port  instruction_mem,
 
@@ -39,7 +39,7 @@ module qrisc32_IF(
     logic[31:0] jump_address_w;
     logic       if_stall;
     logic[31:0] stalled_adr0;
-    logic[31:0] stalled_adr1;
+    logic[31:0] offset_ext_w;
 
     always_comb begin
         if_stall = instruction_mem.wait_req | pipe_stall;
@@ -52,7 +52,8 @@ module qrisc32_IF(
             base_w=new_address;
             offset_w=0;
         end
-        jump_address_w = base_w+offset_w;
+        offset_ext_w   = {29'd0, offset_w};
+        jump_address_w = base_w + offset_ext_w;
     end
 
     always_ff@(posedge clk or posedge areset)
@@ -60,13 +61,12 @@ module qrisc32_IF(
         instruction_mem.address_r<='0;//reset address!
         instruction_mem.rd<=1;//forever =1
         instruction<='0;//=ldr R0,R0 =nop
-        {stalled_adr0,stalled_adr1}<='0;
+        stalled_adr0<='0;
     end else begin
         if(~if_stall) begin
             instruction                 <= instruction_mem.data_r;
             instruction_mem.address_r  <= jump_address_w;
             stalled_adr0                <= jump_address_w;
-            stalled_adr1                <= stalled_adr0;
         end else begin
             instruction_mem.address_r  <= stalled_adr0;
             //instruction<='0;

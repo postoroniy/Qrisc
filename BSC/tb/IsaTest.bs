@@ -135,7 +135,6 @@ mkIsaTest =
                 if cycleCount == 3000
                     then action
                         checking := True
-                        checkIdx := 0
                     else noAction
 
           "checkWord": when checking ==>

@@ -2,6 +2,7 @@ export PATH:=${HOME}/projects/bluespec/bsc/inst/bin:$(PATH)
 
 DISTRO ?= ${HOME}/projects/bluespec/bsc/inst/lib
 BSC ?= bsc
+VERILATOR ?= verilator
 BSV_LIBS ?= ${HOME}/projects/bluespec/Piccolo
 RTL_DIR ?= rtl
 TB_DIR ?= tb
@@ -25,11 +26,16 @@ RF_ZERO_HEX = $(HEXDIR)/rf_zero_32.hex
 
 BSC_FLAGS ?= -keep-fires -aggressive-conditions -no-warn-action-shadowing -no-show-timestamps \
 	-check-assert -suppress-warnings G0020 +RTS -K128M -RTS -show-range-conflict
+BSC_SOURCE_LINT_FLAGS ?= -keep-fires -aggressive-conditions -no-show-timestamps \
+	-check-assert +RTS -K128M -RTS -show-range-conflict
 BSC_SIM_FLAGS = -sim $(BSC_FLAGS) -u -elab -bdir $(BDIR) -simdir $(SIMDIR) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR)
 BSC_VERILOG_FLAGS = $(BSC_FLAGS) -u -elab -bdir $(BDIR) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR)
-VERILOG_OUTPUT = $(VDIR)/mkQrisc32.v
+VERILATOR_LINT_FLAGS ?= --lint-only -Wall
+LINT_WAIVERS ?= lint/verilator.vlt
+BSC_TOP = qrisc32
+VERILOG_OUTPUT = $(VDIR)/$(BSC_TOP).v
 
-.PHONY: all smoke flags isa axi test model model-smoke model-flags model-isa model-axi verilog synth clean
+.PHONY: all smoke flags isa axi test model model-smoke model-flags model-isa model-axi verilog synth lint clean
 
 all: smoke flags isa axi
 test: all
@@ -84,7 +90,7 @@ model-axi: $(AXI_HEX) $(RF_ZERO_HEX) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR)
 	$(call RUN_BSC_TEST,mkModelAxiTest,ModelAxiTest,PASS: AXI smoke dmem\[0\] = 12)
 
 $(VERILOG_OUTPUT): $(RTL_DIR)/Qrisc32RTL.bs | $(BDIR) $(IDIR) $(VDIR)
-	$(BSC) $(BSC_VERILOG_FLAGS) -remove-dollar -g mkQrisc32 -verilog $(RTL_DIR)/Qrisc32RTL.bs
+	$(BSC) $(BSC_VERILOG_FLAGS) -remove-dollar -g $(BSC_TOP) -verilog $(RTL_DIR)/Qrisc32RTL.bs
 	test -s $(VERILOG_OUTPUT)
 
 verilog: $(VERILOG_OUTPUT)
@@ -92,6 +98,15 @@ verilog: $(VERILOG_OUTPUT)
 synth: verilog
 	mkdir -p $(BDIR)/yosys
 	yosys -s ys
+
+lint: BSC_FLAGS = $(BSC_SOURCE_LINT_FLAGS)
+lint: $(SMOKE_HEX) $(SMOKE_INIT_HEX) $(FLAGS_HEX) $(ISA_HEX) $(DMEM_ZERO_HEX) $(AXI_HEX) $(VERILOG_OUTPUT) $(LINT_WAIVERS) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR)
+	$(BSC) $(BSC_SIM_FLAGS) -g mkSmokeTest $(TB_DIR)/SmokeTest.bs
+	$(BSC) $(BSC_SIM_FLAGS) -g mkFlagsTest $(TB_DIR)/FlagsTest.bs
+	$(BSC) $(BSC_SIM_FLAGS) -g mkIsaTest $(TB_DIR)/IsaTest.bs
+	$(BSC) $(BSC_SIM_FLAGS) -g mkAxiTest $(TB_DIR)/AxiTest.bs
+	$(VERILATOR) $(VERILATOR_LINT_FLAGS) $(LINT_WAIVERS) \
+		$(DISTRO)/Verilog/FIFO1.v $(DISTRO)/Verilog/FIFO2.v $(VDIR)/mkQrisc32.v $(VERILOG_OUTPUT) --top-module $(BSC_TOP)
 
 clean:
 	rm -rf $(BDIR)

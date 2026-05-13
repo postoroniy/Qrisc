@@ -1,6 +1,4 @@
-read_verilog ../../bsc/inst/lib/Verilog/FIFO1.v
-read_verilog ../../bsc/inst/lib/Verilog/FIFO2.v
-read_verilog build/verilog/qrisc32.v
+read_verilog build/hdl/Qrisc32RTL.topEntity/*.v
 prep -top qrisc32 -flatten
 opt -full
 opt_expr -mux_undef -mux_bool -undriven -fine

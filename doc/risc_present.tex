@@ -63,7 +63,7 @@
 \begin{frame}
   \titlepage
   \begin{itemize}
-    \item 5-stage RISC.
+    \item 5-stage RISC: IF, ID, EX, MEM, WB.
     \item AXI4-style instruction read master.
     \item AXI4-style data read/write master.
     \item 32 general-purpose 32-bit registers.
@@ -101,9 +101,8 @@
   \begin{itemize}
     \item Decodes instruction words.
     \item Activates control signals for the next stage.
-    \item Reads values from the register file.
-    \item Contains the writeback stage.
-    \item Writeback stores register values from the EX and MEM stages.
+    \item Reads values from the standalone register file.
+    \item Applies EX, MEM, and WB forwarding before driving the EX stage.
   \end{itemize}
 \end{frame}
 
@@ -111,7 +110,8 @@
   \begin{itemize}
     \item Executes operations according to ID-stage control signals.
     \item Changes the SRC2 register by -4, -2, -1, 0, 1, 2, or 4.
-    \item Forwards results to writeback and can bypass the MEM stage.
+    \item Forwards ALU results and SRC2 increments to the bypass network.
+    \item Provides one of the writeback sources.
   \end{itemize}
 \end{frame}
 
@@ -124,11 +124,20 @@
   \end{itemize}
 \end{frame}
 
+\begin{frame}{Writeback Stage}
+  \begin{itemize}
+    \item Owns the architectural register-file commit path.
+    \item Registers EX-stage and MEM-stage writeback sources.
+    \item Writes EX/DST, EX/SRC2 increment, and MEM/DST results.
+    \item Keeps deterministic priority when two sources target the same register.
+  \end{itemize}
+\end{frame}
+
 \begin{frame}{Forwarding}
   \begin{itemize}
-    \item EX stage forwards results to the ID stage.
-    \item Writeback can write from two sources: EX/DST and MEM/DST or MEM/SRC2.
-    \item ID can obtain register values from EX, MEM, or the register file.
+    \item ID can obtain register values from EX, MEM, WB, or the register file.
+    \item MEM forwarding has priority over EX forwarding, matching the original SV behavior.
+    \item WB forwarding covers values committed one stage after EX or MEM.
   \end{itemize}
 \end{frame}
 

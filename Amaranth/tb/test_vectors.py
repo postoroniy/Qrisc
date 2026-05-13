@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from qrisc32_model.model import load_manifest, run_vector
+from Qrisc32Model.model import load_manifest, run_vector
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

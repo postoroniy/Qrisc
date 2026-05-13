@@ -20,7 +20,7 @@
 //
 //////////////////////////////////////////////////////////////////////////////////////////////
 
-package risc_pack;
+package Qrisc_pack;
     typedef struct packed{
         logic[31:0]       val_r1;//value of register src1
         logic[31:0]       val_r2;//value of register src2

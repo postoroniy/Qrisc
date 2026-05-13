@@ -13,7 +13,7 @@ def repo_root() -> Path:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 1 or args[0] not in {"smoke", "flags", "isa", "axi"}:
-        print("usage: python -m qrisc32_model.runner smoke|flags|isa|axi", file=sys.stderr)
+        print("usage: python -m Qrisc32Model.runner smoke|flags|isa|axi", file=sys.stderr)
         return 2
 
     manifest, dmem = run_vector(repo_root(), args[0])

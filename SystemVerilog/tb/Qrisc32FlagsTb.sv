@@ -32,7 +32,7 @@ module qrisc32_flags_tb(
   output  bit     done = 0
 );
 
-  import risc_pack::*;
+  import Qrisc_pack::*;
 
   localparam int IMEM_SIZE = 256;
   localparam int IMEM_ADR_LIMIT = 128;

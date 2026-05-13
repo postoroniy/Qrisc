@@ -1,0 +1,7 @@
+`verilator_config
+
+// BSC generated Verilog exposes unused scheduling/debug nets and xactor storage.
+lint_off -rule UNUSEDSIGNAL -file "*qrisc32.v"
+lint_off -rule SYNCASYNCNET -file "*qrisc32.v"
+lint_off -rule UNUSEDSIGNAL -file "*mkQrisc32.v"
+lint_off -rule SYNCASYNCNET -file "*mkQrisc32.v"

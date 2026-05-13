@@ -1,11 +1,13 @@
 # qrisc32 in Clash
 
-Status: Clash RTL implementation with generated-HDL smoke, flags, ISA, and AXI
-smoke checks.
+Status: five-stage Clash RTL implementation with generated-HDL smoke, flags,
+ISA, and AXI smoke checks.
 
 The SystemVerilog implementation is the canonical qrisc32 behavior.  Clash work
 consumes the shared programs described by `../tests/vectors.json` and reproduces
-the same architectural results through generated Verilog and Verilator.
+the same architectural results through generated Verilog and Verilator.  The
+RTL now stages instruction fetch, decode, execute, memory response handling, and
+writeback explicitly; architectural register and flag commits happen in WB.
 
 Source layout:
 
@@ -17,6 +19,9 @@ Local checks:
 
 ```sh
 make -C Clash smoke flags isa axi
+make -C Clash verilog
+make -C Clash synth
+make -C Clash lint
 ```
 
 Model-only checks:
@@ -36,3 +41,6 @@ make clash-version
 `../../../clash/clash-compiler` by default and copies the binary to
 `./.local/bin/clash` in this repository. Override `CLASH_COMPILER_ROOT`,
 `CLASH_GHC`, or `CLASH_BIN_DIR` if the checkout or compiler lives elsewhere.
+
+The lint target runs GHC `-Wall -fno-code` for the RTL and model sources, then
+Verilator lint on generated Clash HDL with scoped generated-code waivers.

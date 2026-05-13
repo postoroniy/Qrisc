@@ -22,12 +22,28 @@ import Qrisc_pack::*;
 import Vector::*;
 
 module qrisc32_RF(RF_IFC);
-    Vector#(32, Reg#(Bit#(32))) rf <- replicateM(mkReg(0));
+    Vector#(32, Reg#(Word32)) rf <- replicateM(mkRegA(0));
 
-    method Action writeReg(Bit#(5) addr, Bit#(32) data);
-        if (addr != 0) rf[addr] <= data; // Register 0 typically hardwired to 0
+    method Action write_wb(Pipe_s ex, Pipe_s mem);
+        Bool mem_writes = mem.write_reg;
+
+        if (ex.write_reg && ex.incr_r2_enable && (ex.dst_r == ex.src_r2)) begin
+            if (!(mem_writes && (mem.dst_r == ex.dst_r)))
+                rf[ex.dst_r] <= ex.val_r2;
+        end
+        else begin
+            if (ex.write_reg && !(mem_writes && (mem.dst_r == ex.dst_r)))
+                rf[ex.dst_r] <= ex.val_dst;
+            if (ex.incr_r2_enable && !(mem_writes && (mem.dst_r == ex.src_r2)))
+                rf[ex.src_r2] <= ex.val_r2;
+        end
+
+        if (mem_writes) begin
+            rf[mem.dst_r] <= mem.val_dst;
+        end
     endmethod
 
-    method Bit#(32) readReg1(Bit#(5) addr) = rf[addr];
-    method Bit#(32) readReg2(Bit#(5) addr) = rf[addr];
+    method Word32 read_r1(RegIdx addr) = rf[addr];
+    method Word32 read_r2(RegIdx addr) = rf[addr];
+    method Word32 read_dst(RegIdx addr) = rf[addr];
 endmodule

@@ -70,7 +70,7 @@ def padded_size(needed, minimum):
 
 def sv_for(spec, tests_dir):
     name = spec["name"]
-    top = f"qrisc32_clash_{name}_tb"
+    top = f"qrisc32_{name}_tb"
     expected = {int(k): int(v) for k, v in spec["expected_dmem"].items()}
     expected_expr = " && ".join(
         f"(Dram.sram[{idx}] === 32'd{value})" for idx, value in sorted(expected.items())
@@ -273,7 +273,7 @@ module {top}(
     .verbose(verbose)
   );
 
-  qrisc32_clash dut (
+  qrisc32 dut (
     .clk(clk),
     .areset(areset),
     .axi_instruction_arready(axi_instruction_arready),

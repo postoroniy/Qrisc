@@ -1,9 +1,11 @@
-read_verilog -sv rtl/risc_pack.sv
-read_verilog -sv rtl/qrisc32_EX.sv
-read_verilog -sv rtl/qrisc32_ID.sv
-read_verilog -sv rtl/qrisc32_IF.sv
-read_verilog -sv rtl/qrisc32_MEM.sv
-read_verilog -sv rtl/qrisc32.sv
+read_verilog -sv rtl/Qrisc_pack.sv
+read_verilog -sv rtl/Qrisc32RF.sv
+read_verilog -sv rtl/Qrisc32WB.sv
+read_verilog -sv rtl/Qrisc32EX.sv
+read_verilog -sv rtl/Qrisc32ID.sv
+read_verilog -sv rtl/Qrisc32IF.sv
+read_verilog -sv rtl/Qrisc32MEM.sv
+read_verilog -sv rtl/Qrisc32.sv
 prep -flatten
 opt -full
 opt_expr -mux_undef -mux_bool -undriven -fine

@@ -12,7 +12,7 @@ that manifest as their source of truth.
 ## smoke.hex
 
 Program: the original optimized qrisc32 bubble-sort smoke program from
-`SystemVerilog/tb/qrisc32_tb.sv`.
+`SystemVerilog/tb/Qrisc32Tb.sv`.
 
 Initial data memory comes from `smoke_reversed.hex`:
 
@@ -23,11 +23,11 @@ Initial data memory comes from `smoke_reversed.hex`:
 Expected result: `dmem[0..9] = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10`.
 
 The original SystemVerilog smoke bench also runs the historical modified-shell
-and first-shell sort loaders from `qrisc32_tb.sv` against reverse, random, and
+and first-shell sort loaders from `Qrisc32Tb.sv` against reverse, random, and
 already-sorted input data.  The generated `smoke_shell_mdf.hex` and
 `smoke_shell_first.hex` files are kept for that compatibility work, but the
 portable manifest smoke vector uses the bubble-sort binary.  There is no
-quick-sort loader in the current `qrisc32_tb.sv` source.
+quick-sort loader in the current `Qrisc32Tb.sv` source.
 
 ## axi_smoke.hex
 

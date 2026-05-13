@@ -1,4 +1,5 @@
 RUNGHC ?= runghc
+GHC ?= $(CLASH_GHC)
 CLASH_COMPILER_ROOT ?= ../../../clash/clash-compiler
 CLASH_GHC ?= $(HOME)/.ghcup/ghc/9.6.7/bin/ghc
 CLASH_BIN_DIR ?= ../.local/bin
@@ -14,13 +15,15 @@ BENCH_DIR = $(BUILD_DIR)/tb
 VERILATOR_DIR = $(BUILD_DIR)/verilator
 AXI_MEM = ../SystemVerilog/tb/axi_checked_mem.sv
 VERILATOR_CFLAGS ?= -O0 -x-assign 0 --trace -Wno-fatal -Wno-lint -Wno-UNOPTFLAT
+VERILATOR_LINT_FLAGS ?= --lint-only -Wall
 VERILATOR_THREADS ?= 2
 VERILATOR_ENV ?= CCACHE_DISABLE=1
+LINT_WAIVERS ?= lint/verilator.vlt
 LOCAL_CLASH_PROJECT := build/local-clash/cabal.project
 LOCAL_CLASH_ROOT := $(abspath $(CLASH_COMPILER_ROOT))
 LOCAL_CLASH_BINDIR := $(abspath $(CLASH_BIN_DIR))
 
-.PHONY: all smoke flags isa axi test verilog \
+.PHONY: all smoke flags isa axi test verilog synth lint \
 	model model-smoke model-flags model-isa model-axi \
 	install-clash clash-version clean FORCE
 .SECONDARY: $(BENCH_DIR)/%/.stamp
@@ -82,6 +85,15 @@ $(HDL_STAMP): src/Qrisc32RTL.hs
 
 verilog: $(HDL_STAMP)
 
+synth: $(HDL_STAMP) ys
+	mkdir -p $(BUILD_DIR)/yosys
+	yosys -s ys
+
+lint: $(HDL_STAMP) $(LINT_WAIVERS)
+	$(GHC) -XNoImplicitPrelude -Wall -fno-code -package-db $(CLASH_PACKAGE_DB) -isrc src/Qrisc32RTL.hs
+	$(GHC) -Wall -fno-code -isrc src/Qrisc32Model.hs tb/Main.hs
+	$(VERILATOR_ENV) verilator $(VERILATOR_LINT_FLAGS) $(LINT_WAIVERS) $(HDL_DIR)/Qrisc32RTL.topEntity/qrisc32.v --top-module qrisc32
+
 $(BENCH_DIR)/%/.stamp: tb/gen_vector_bench.py ../tests/vectors.json
 	mkdir -p $(BENCH_DIR)/$*
 	python3 tb/gen_vector_bench.py --vector $* --manifest ../tests/vectors.json --out-dir $(BENCH_DIR)/$* --vcd-dir $(VCD_DIR)
@@ -90,27 +102,27 @@ $(BENCH_DIR)/%/.stamp: tb/gen_vector_bench.py ../tests/vectors.json
 $(VERILATOR_DIR)/%/.stamp: $(HDL_STAMP) $(BENCH_DIR)/%/.stamp $(AXI_MEM)
 	mkdir -p $(VERILATOR_DIR)/$* $(VCD_DIR)
 	HDL_FILES="$$(find $(HDL_DIR) -name '*.v' -o -name '*.sv' | sort)"; \
-	$(VERILATOR_ENV) verilator --cc --exe $(VERILATOR_CFLAGS) $$HDL_FILES $(AXI_MEM) $(BENCH_DIR)/$*/qrisc32_clash_$*_tb.sv --Mdir $(VERILATOR_DIR)/$* --threads $(VERILATOR_THREADS) --build $(BENCH_DIR)/$*/qrisc32_clash_$*_tb.cpp --top qrisc32_clash_$*_tb
+	$(VERILATOR_ENV) verilator --cc --exe $(VERILATOR_CFLAGS) $$HDL_FILES $(AXI_MEM) $(BENCH_DIR)/$*/qrisc32_$*_tb.sv --Mdir $(VERILATOR_DIR)/$* --threads $(VERILATOR_THREADS) --build $(BENCH_DIR)/$*/qrisc32_$*_tb.cpp --top qrisc32_$*_tb
 	touch $@
 
 smoke: $(VERILATOR_DIR)/smoke/.stamp
 	rm -f $(VCD_DIR)/smoke.vcd
-	./$(VERILATOR_DIR)/smoke/Vqrisc32_clash_smoke_tb
+	./$(VERILATOR_DIR)/smoke/Vqrisc32_smoke_tb
 	test -s $(VCD_DIR)/smoke.vcd
 
 flags: $(VERILATOR_DIR)/flags/.stamp
 	rm -f $(VCD_DIR)/flags.vcd
-	./$(VERILATOR_DIR)/flags/Vqrisc32_clash_flags_tb
+	./$(VERILATOR_DIR)/flags/Vqrisc32_flags_tb
 	test -s $(VCD_DIR)/flags.vcd
 
 isa: $(VERILATOR_DIR)/isa/.stamp
 	rm -f $(VCD_DIR)/isa.vcd
-	./$(VERILATOR_DIR)/isa/Vqrisc32_clash_isa_tb
+	./$(VERILATOR_DIR)/isa/Vqrisc32_isa_tb
 	test -s $(VCD_DIR)/isa.vcd
 
 axi: $(VERILATOR_DIR)/axi/.stamp
 	rm -f $(VCD_DIR)/axi.vcd
-	./$(VERILATOR_DIR)/axi/Vqrisc32_clash_axi_tb
+	./$(VERILATOR_DIR)/axi/Vqrisc32_axi_tb
 	test -s $(VCD_DIR)/axi.vcd
 
 test: all

@@ -20,81 +20,30 @@
 //////////////////////////////////////////////////////////////////////////////////////////////
 import Qrisc_pack::*;
 import FIFOF::*;
-import Vector::*;
-import RWire::*;
 
 module qrisc32_ID#(
         FIFOF#(Instruction) instructionFifo,
         FIFOF#(Pipe_s) decodeFifo,
-        FIFOF#(Pipe_s) wbExFifo,
-        FIFOF#(Pipe_s) wbMemFifo,
+        RF_IFC rf,
+        WB_IFC writebackStage,
         Bool flush_request
     ) (Empty);
-
-    Vector#(32, Reg#(Word32)) rf <- replicateM(mkRegA(0));
-
-    Reg#(Pipe_s) wb_ex_reg  <- mkRegA(defaultValue);
-    Reg#(Pipe_s) wb_mem_reg <- mkRegA(defaultValue);
-
-    RWire#(Pipe_s) wb_ex_bypass <- mkRWire;
-    RWire#(Pipe_s) wb_mem_bypass <- mkRWire;
-
-    rule writeback(wbExFifo.notEmpty || wbMemFifo.notEmpty);
-        Bool have_ex = wbExFifo.notEmpty;
-        Bool have_mem = wbMemFifo.notEmpty;
-
-        Pipe_s ex = defaultValue;
-        Pipe_s mem = defaultValue;
-
-        if (have_ex) begin
-            ex = wbExFifo.first;
-            wbExFifo.deq;
-            wb_ex_reg <= ex;
-            wb_ex_bypass.wset(ex);
-        end
-
-        if (have_mem) begin
-            mem = wbMemFifo.first;
-            wbMemFifo.deq;
-            wb_mem_reg <= mem;
-            wb_mem_bypass.wset(mem);
-        end
-
-        Bool mem_writes = have_mem && mem.write_reg;
-
-        if (have_ex) begin
-            if (ex.write_reg && ex.incr_r2_enable && (ex.dst_r == ex.src_r2)) begin
-                if (!(mem_writes && (mem.dst_r == ex.dst_r)))
-                    rf[ex.dst_r] <= ex.val_r2;
-            end
-            else begin
-                if (ex.write_reg && !(mem_writes && (mem.dst_r == ex.dst_r)))
-                    rf[ex.dst_r] <= ex.val_dst;
-                if (ex.incr_r2_enable && !(mem_writes && (mem.dst_r == ex.src_r2)))
-                    rf[ex.src_r2] <= ex.val_r2;
-            end
-        end
-
-        if (mem_writes) begin
-            rf[mem.dst_r] <= mem.val_dst;
-        end
-    endrule
 
     function Pipe_s apply_forwarding(Pipe_s p, Pipe_s wb_mem_fwd, Pipe_s wb_ex_fwd);
         p.val_r1 =   (wb_mem_fwd.write_reg && wb_mem_fwd.dst_r == p.src_r1) ? wb_mem_fwd.val_dst :
                     ((wb_ex_fwd.write_reg && wb_ex_fwd.dst_r == p.src_r1) ? wb_ex_fwd.val_dst :
                      (wb_ex_fwd.incr_r2_enable && wb_ex_fwd.src_r2 == p.src_r1) ? wb_ex_fwd.val_r2 :
-                      rf[p.src_r1]);
+                      rf.read_r1(p.src_r1));
 
         p.val_r2 =   (wb_mem_fwd.write_reg && wb_mem_fwd.dst_r == p.src_r2) ? wb_mem_fwd.val_dst :
                     ((wb_ex_fwd.write_reg && wb_ex_fwd.dst_r == p.src_r2) ? wb_ex_fwd.val_dst :
                      (wb_ex_fwd.incr_r2_enable && wb_ex_fwd.src_r2 == p.src_r2) ? wb_ex_fwd.val_r2 :
-                      rf[p.src_r2]);
+                      rf.read_r2(p.src_r2));
 
         p.val_dst =  (wb_mem_fwd.write_reg && wb_mem_fwd.dst_r == p.dst_r) ? wb_mem_fwd.val_dst :
                     ((wb_ex_fwd.write_reg && wb_ex_fwd.dst_r == p.dst_r) ? wb_ex_fwd.val_dst :
                      (wb_ex_fwd.incr_r2_enable && wb_ex_fwd.src_r2 == p.dst_r) ? wb_ex_fwd.val_r2 :
-                      rf[p.dst_r]);
+                      rf.read_dst(p.dst_r));
         return p;
     endfunction
 
@@ -230,33 +179,20 @@ module qrisc32_ID#(
         return p;
     endfunction
 
-    (* descending_urgency = "writeback, feed_instructionFifo, flush_instructionFifo" *)
     rule flush_instructionFifo(
         flush_request && instructionFifo.notEmpty
     );
         instructionFifo.deq;
     endrule
 
-    (* descending_urgency = "writeback, feed_instructionFifo, flush_instructionFifo" *)
     rule feed_instructionFifo(
         instructionFifo.notEmpty && decodeFifo.notFull && !flush_request
     );
         Instruction i = instructionFifo.first;
         instructionFifo.deq;
 
-        Pipe_s wb_ex_fwd = wb_ex_reg;
-        Pipe_s wb_mem_fwd = wb_mem_reg;
-
-        let ex_maybe = wb_ex_bypass.wget;
-        let mem_maybe = wb_mem_bypass.wget;
-
-        if (isValid(ex_maybe)) begin
-            wb_ex_fwd = validValue(ex_maybe);
-        end
-        if (isValid(mem_maybe)) begin
-            wb_mem_fwd = validValue(mem_maybe);
-        end
-
+        Pipe_s wb_ex_fwd = writebackStage.forward_ex();
+        Pipe_s wb_mem_fwd = writebackStage.forward_mem();
         decodeFifo.enq(decode(i, wb_mem_fwd, wb_ex_fwd));
     endrule
 endmodule

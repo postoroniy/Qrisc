@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from qrisc32_model.model import load_manifest
+from Qrisc32Model.model import load_manifest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
