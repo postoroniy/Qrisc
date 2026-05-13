@@ -13,7 +13,7 @@ reported as implemented.
 | `BSV/` | Bluespec SystemVerilog port with AXI instruction/data interfaces; smoke, flags, ISA, and AXI protocol tests pass against the shared vectors. |
 | `Amaranth/` | Staged Python/Amaranth architectural model with shared smoke, flags, ISA, and AXI smoke checks passing; HDL elaboration remains the next refinement. |
 | `Clash/` | Clash RTL with AXI instruction/data interfaces; generated-HDL smoke, flags, ISA, and AXI smoke checks are the implementation gate. |
-| `BSC/` | Bluespec Classic staged source model with shared smoke, flags, ISA, and AXI smoke checks passing under Bluesim. |
+| `BSC/` | Bluespec Classic RTL with AXI instruction/data interfaces; Bluesim smoke, flags, ISA, and AXI smoke checks are the implementation gate, with the older model kept as an oracle. |
 
 The old foundry-specific physical-design flow has been removed.  The repository
 now keeps simulator tests as the default pass/fail gate, with optional generic

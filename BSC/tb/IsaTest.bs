@@ -1,9 +1,12 @@
 package IsaTest where
 
+import AXI4_Types
+import Connectable
 import RegFile
-import Qrisc32Model
+import Semi_FIFOF
+import Qrisc32RTL
 
-expected :: Bit 5 -> Word32
+expected :: Bit 5 -> Bit 32
 expected idx =
     case idx of
         0 -> 0
@@ -38,21 +41,113 @@ expected idx =
 mkIsaTest :: Module Empty
 mkIsaTest =
     module
-        imem :: RegFile MemIdx Word32 <- mkRegFileLoad "build/hex/isa_1024.hex" 0 1023
-        dmem :: RegFile MemIdx Word32 <- mkRegFileLoad "build/hex/dmem_zero_1024.hex" 0 1023
-        cpu :: Qrisc32ModelIfc <- mkQrisc32Model imem dmem 328 27 4096
-        idx :: Reg (Bit 5) <- mkReg 0
+        cycleCount :: Reg (Bit 32) <- mkReg 0
+        checking :: Reg Bool <- mkReg False
+        checkIdx :: Reg (Bit 5) <- mkReg 0
+
+        imem :: RegFile (Bit 32) Word32 <- mkRegFileLoad "build/hex/isa_1024.hex" 0 1023
+        dmem :: RegFile (Bit 32) Word32 <- mkRegFileLoad "build/hex/dmem_zero_1024.hex" 0 1023
+
+        axiInst :: AXI4_Slave_Xactor_IFC 1 32 32 1 <- mkAXI4_Slave_Xactor_2
+        axiData :: AXI4_Slave_Xactor_IFC 1 32 32 1 <- mkAXI4_Slave_Xactor_2
+        cpu :: QriscIfc <- mkQrisc32
+        mkConnection cpu.axi_instruction axiInst.axi_side
+        mkConnection cpu.axi_data axiData.axi_side
+
+        instRdPending :: Reg Bool <- mkReg False
+        instRdAddr :: Reg (Bit 32) <- mkReg 0
+        instRdBeatsLeft :: Reg (Bit 8) <- mkReg 0
+        instRdId :: Reg (Bit 1) <- mkReg 0
+
+        dataRdPending :: Reg Bool <- mkReg False
+        dataRdAddr :: Reg (Bit 32) <- mkReg 0
+        dataRdBeatsLeft :: Reg (Bit 8) <- mkReg 0
+        dataRdId :: Reg (Bit 1) <- mkReg 0
+
+        haveAw :: Reg Bool <- mkReg False
+        aw :: Reg (AXI4_Wr_Addr 1 32 1) <- mkRegU
+        wrAddrReg :: Reg (Bit 32) <- mkReg 0
+        wrBeatsLeft :: Reg (Bit 8) <- mkReg 0
 
         rules
-          "check": when cpu.done ==>
-            let got = cpu.dmemAt (zeroExtend idx)
-                exp = expected idx
-            in if got /= exp
-               then action
-                    $display "FAIL: dmem[%0d]=%0d expected %0d" idx got exp
-                    $finish 1
-               else if idx == 27
+          "instAcceptReq": when not instRdPending && axiInst.o_rd_addr.notEmpty ==>
+            action
+                let req = axiInst.o_rd_addr.first
+                axiInst.o_rd_addr.deq
+                instRdPending := True
+                instRdAddr := truncate req.araddr
+                instRdBeatsLeft := req.arlen + 1
+                instRdId := req.arid
+
+          "instSendBeat": when instRdPending && axiInst.i_rd_data.notFull ==>
+            action
+                let rdWord = imem.sub (instRdAddr >> 2)
+                    isLast = instRdBeatsLeft == 1
+                axiInst.i_rd_data.enq (AXI4_Rd_Data { rid = instRdId; rdata = rdWord; rresp = axi4_resp_okay; rlast = isLast; ruser = 0 })
+                instRdAddr := instRdAddr + 4
+                instRdBeatsLeft := instRdBeatsLeft - 1
+                if isLast then instRdPending := False else noAction
+
+          "dataAcceptRdReq": when not dataRdPending && axiData.o_rd_addr.notEmpty ==>
+            action
+                let req = axiData.o_rd_addr.first
+                axiData.o_rd_addr.deq
+                dataRdPending := True
+                dataRdAddr := truncate req.araddr
+                dataRdBeatsLeft := req.arlen + 1
+                dataRdId := req.arid
+
+          "dataSendRdBeat": when dataRdPending && axiData.i_rd_data.notFull ==>
+            action
+                let rdWord = dmem.sub (dataRdAddr >> 2)
+                    isLast = dataRdBeatsLeft == 1
+                axiData.i_rd_data.enq (AXI4_Rd_Data { rid = dataRdId; rdata = rdWord; rresp = axi4_resp_okay; rlast = isLast; ruser = 0 })
+                dataRdAddr := dataRdAddr + 4
+                dataRdBeatsLeft := dataRdBeatsLeft - 1
+                if isLast then dataRdPending := False else noAction
+
+          "captureAw": when not haveAw && axiData.o_wr_addr.notEmpty ==>
+            action
+                let req = axiData.o_wr_addr.first
+                axiData.o_wr_addr.deq
+                aw := req
+                haveAw := True
+                wrAddrReg := truncate req.awaddr
+                wrBeatsLeft := req.awlen + 1
+
+          "dataWrite": when haveAw && axiData.o_wr_data.notEmpty ==>
+            action
+                let wd = axiData.o_wr_data.first
+                    isLast = wrBeatsLeft == 1 || wd.wlast
+                axiData.o_wr_data.deq
+                dmem.upd (wrAddrReg >> 2) wd.wdata
+                wrAddrReg := wrAddrReg + 4
+                wrBeatsLeft := wrBeatsLeft - 1
+                if isLast
+                    then action
+                        axiData.i_wr_resp.enq (AXI4_Wr_Resp { bid = aw.awid; bresp = axi4_resp_okay; buser = 0 })
+                        haveAw := False
+                    else noAction
+
+          "tick": when True ==>
+            action
+                cycleCount := cycleCount + 1
+                if cycleCount == 3000
+                    then action
+                        checking := True
+                        checkIdx := 0
+                    else noAction
+
+          "checkWord": when checking ==>
+            action
+                let got = dmem.sub (zeroExtend checkIdx)
+                    exp = expected checkIdx
+                if got /= exp
+                    then action
+                        $display "FAIL: dmem[%0d]=%0d expected %0d" checkIdx got exp
+                        $finish 1
+                    else if checkIdx == 27
                     then action
                         $display "PASS: ISA parity vector"
                         $finish 0
-                    else idx := idx + 1
+                    else checkIdx := checkIdx + 1

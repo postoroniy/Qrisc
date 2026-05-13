@@ -1,22 +1,183 @@
 package AxiTest where
 
+import AXI4_Types
+import Connectable
 import RegFile
-import Qrisc32Model
+import Semi_FIFOF
+import Qrisc32RTL
 
 mkAxiTest :: Module Empty
 mkAxiTest =
     module
-        imem :: RegFile MemIdx Word32 <- mkRegFileLoad "build/hex/axi_smoke_1024.hex" 0 1023
-        dmem :: RegFile MemIdx Word32 <- mkRegFile 0 1023
-        cpu :: Qrisc32ModelIfc <- mkQrisc32Model imem dmem 17 1023 4096
+        cycleCount :: Reg (Bit 32) <- mkReg 0
+
+        imem :: RegFile (Bit 32) Word32 <- mkRegFileLoad "build/hex/axi_smoke_1024.hex" 0 1023
+        dmem :: RegFile (Bit 32) Word32 <- mkRegFile 0 1023
+
+        axiInst :: AXI4_Slave_Xactor_IFC 1 32 32 1 <- mkAXI4_Slave_Xactor_2
+        axiData :: AXI4_Slave_Xactor_IFC 1 32 32 1 <- mkAXI4_Slave_Xactor_2
+        cpu :: QriscIfc <- mkQrisc32
+        mkConnection cpu.axi_instruction axiInst.axi_side
+        mkConnection cpu.axi_data axiData.axi_side
+
+        instReqCount :: Reg (Bit 32) <- mkReg 0
+        instRdPending :: Reg Bool <- mkReg False
+        instRdAddr :: Reg (Bit 32) <- mkReg 0
+        instRdBeatsLeft :: Reg (Bit 8) <- mkReg 0
+        instRdDelay :: Reg (Bit 4) <- mkReg 0
+        instRdId :: Reg (Bit 1) <- mkReg 0
+
+        dataRdReqCount :: Reg (Bit 32) <- mkReg 0
+        dataRdPending :: Reg Bool <- mkReg False
+        dataRdAddr :: Reg (Bit 32) <- mkReg 0
+        dataRdBeatsLeft :: Reg (Bit 8) <- mkReg 0
+        dataRdDelay :: Reg (Bit 4) <- mkReg 0
+        dataRdId :: Reg (Bit 1) <- mkReg 0
+
+        haveAw :: Reg Bool <- mkReg False
+        aw :: Reg (AXI4_Wr_Addr 1 32 1) <- mkRegU
+        haveW :: Reg Bool <- mkReg False
+        wrDataReg :: Reg (Bit 32) <- mkReg 0
+        wrRespPending :: Reg Bool <- mkReg False
+        wrRespDelay :: Reg (Bit 4) <- mkReg 0
+        wrReqCount :: Reg (Bit 32) <- mkReg 0
 
         rules
-          "check": when cpu.done ==>
-            let got = cpu.dmemAt 0
-            in if got /= 12
-               then action
-                    $display "FAIL: AXI smoke dmem[0]=%0d expected 12" got
-                    $finish 1
-               else action
-                    $display "PASS: AXI smoke dmem[0] = 12"
-                    $finish 0
+          "instAcceptReq": when not instRdPending && axiInst.o_rd_addr.notEmpty && cycleCount[1:0] /= 2'b01 ==>
+            action
+                let req = axiInst.o_rd_addr.first
+                if req.arlen /= 0 || req.arsize /= axsize_4 || req.arburst /= axburst_incr || req.araddr[1:0] /= 0
+                    then action
+                        $display "FAIL: instruction AXI AR field mismatch"
+                        $finish 1
+                    else if req.araddr > 32'd512
+                    then action
+                        $display "FAIL: instruction AXI read address out of limit %08x" req.araddr
+                        $finish 1
+                    else action
+                        axiInst.o_rd_addr.deq
+                        instRdPending := True
+                        instRdAddr := truncate req.araddr
+                        instRdBeatsLeft := req.arlen + 1
+                        instRdDelay := if instReqCount[0:0] == 0 then 4'd4 else 4'd2
+                        instReqCount := instReqCount + 1
+                        instRdId := req.arid
+
+          "instDelay": when instRdPending && instRdDelay /= 0 ==>
+            instRdDelay := instRdDelay - 1
+
+          "instSendBeat": when instRdPending && instRdDelay == 0 && axiInst.i_rd_data.notFull ==>
+            action
+                let rdWord = imem.sub (instRdAddr >> 2)
+                    isLast = instRdBeatsLeft == 1
+                axiInst.i_rd_data.enq (AXI4_Rd_Data { rid = instRdId; rdata = rdWord; rresp = axi4_resp_okay; rlast = isLast; ruser = 0 })
+                instRdAddr := instRdAddr + 4
+                instRdBeatsLeft := instRdBeatsLeft - 1
+                if isLast then instRdPending := False else noAction
+
+          "failDataReadDuringWrite": when (haveAw || haveW || wrRespPending) && axiData.o_rd_addr.notEmpty ==>
+            action
+                $display "FAIL: data AXI read issued before write response"
+                $finish 1
+
+          "dataAcceptRdReq": when not dataRdPending && not haveAw && not haveW && not wrRespPending && axiData.o_rd_addr.notEmpty && cycleCount[2:0] /= 3'b010 ==>
+            action
+                let req = axiData.o_rd_addr.first
+                if req.arlen /= 0 || req.arsize /= axsize_4 || req.arburst /= axburst_incr || req.araddr[1:0] /= 0
+                    then action
+                        $display "FAIL: data AXI AR field mismatch"
+                        $finish 1
+                    else if req.araddr > 32'd4092
+                    then action
+                        $display "FAIL: data AXI read address out of limit %08x" req.araddr
+                        $finish 1
+                    else action
+                        axiData.o_rd_addr.deq
+                        dataRdPending := True
+                        dataRdAddr := truncate req.araddr
+                        dataRdBeatsLeft := req.arlen + 1
+                        dataRdDelay := if dataRdReqCount[0:0] == 0 then 4'd3 else 4'd2
+                        dataRdReqCount := dataRdReqCount + 1
+                        dataRdId := req.arid
+
+          "dataDelay": when dataRdPending && dataRdDelay /= 0 ==>
+            dataRdDelay := dataRdDelay - 1
+
+          "dataSendRdBeat": when dataRdPending && dataRdDelay == 0 && axiData.i_rd_data.notFull ==>
+            action
+                let rdWord = dmem.sub (dataRdAddr >> 2)
+                    isLast = dataRdBeatsLeft == 1
+                axiData.i_rd_data.enq (AXI4_Rd_Data { rid = dataRdId; rdata = rdWord; rresp = axi4_resp_okay; rlast = isLast; ruser = 0 })
+                dataRdAddr := dataRdAddr + 4
+                dataRdBeatsLeft := dataRdBeatsLeft - 1
+                if isLast then dataRdPending := False else noAction
+
+          "failExtraAw": when (haveAw || wrRespPending) && axiData.o_wr_addr.notEmpty ==>
+            action
+                $display "FAIL: new data AXI AW issued before write response"
+                $finish 1
+
+          "failExtraW": when (haveW || wrRespPending) && axiData.o_wr_data.notEmpty ==>
+            action
+                $display "FAIL: new data AXI W issued before write response"
+                $finish 1
+
+          "captureAw": when not haveAw && not wrRespPending && axiData.o_wr_addr.notEmpty && cycleCount[1:0] /= 2'b10 ==>
+            action
+                let req = axiData.o_wr_addr.first
+                if req.awlen /= 0 || req.awsize /= axsize_4 || req.awburst /= axburst_incr || req.awaddr[1:0] /= 0
+                    then action
+                        $display "FAIL: data AXI AW field mismatch"
+                        $finish 1
+                    else if req.awaddr > 32'd4092
+                    then action
+                        $display "FAIL: data AXI write address out of limit %08x" req.awaddr
+                        $finish 1
+                    else action
+                        axiData.o_wr_addr.deq
+                        aw := req
+                        haveAw := True
+
+          "captureW": when not haveW && not wrRespPending && axiData.o_wr_data.notEmpty && cycleCount[1:0] /= 2'b11 ==>
+            action
+                let wd = axiData.o_wr_data.first
+                if wd.wstrb /= 4'b1111 || not wd.wlast
+                    then action
+                        $display "FAIL: data AXI W field mismatch"
+                        $finish 1
+                    else action
+                        axiData.o_wr_data.deq
+                        wrDataReg := wd.wdata
+                        haveW := True
+
+          "commitWrite": when haveAw && haveW && not wrRespPending ==>
+            action
+                dmem.upd (aw.awaddr >> 2) wrDataReg
+                haveAw := False
+                haveW := False
+                wrRespPending := True
+                wrRespDelay := if wrReqCount[0:0] == 0 then 4'd4 else 4'd2
+                wrReqCount := wrReqCount + 1
+
+          "delayWriteResp": when wrRespPending && wrRespDelay /= 0 ==>
+            wrRespDelay := wrRespDelay - 1
+
+          "sendWriteResp": when wrRespPending && wrRespDelay == 0 && axiData.i_wr_resp.notFull ==>
+            action
+                axiData.i_wr_resp.enq (AXI4_Wr_Resp { bid = aw.awid; bresp = axi4_resp_okay; buser = 0 })
+                wrRespPending := False
+
+          "tick": when True ==>
+            action
+                cycleCount := cycleCount + 1
+                if cycleCount == 32'd1000
+                    then action
+                        let got = dmem.sub 0
+                        if got == 32'd12
+                            then action
+                                $display "PASS: AXI smoke dmem[0] = %0d" got
+                                $finish 0
+                            else action
+                                $display "FAIL: AXI smoke dmem[0] = %0d (expected 12)" got
+                                $finish 1
+                    else noAction

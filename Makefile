@@ -4,7 +4,7 @@
 	amaranth amaranth-venv amaranth-smoke amaranth-flags amaranth-isa amaranth-axi \
 	clash clash-install clash-version clash-smoke clash-flags clash-isa clash-axi \
 	bsc bsc-smoke bsc-flags bsc-isa bsc-axi \
-	synth-generic sv-synth bsv-synth clean
+	synth-generic sv-synth bsv-synth bsc-synth clean
 
 all: test
 
@@ -92,13 +92,16 @@ bsc-isa:
 bsc-axi:
 	$(MAKE) -C BSC axi
 
-synth-generic: sv-synth bsv-synth
+synth-generic: sv-synth bsv-synth bsc-synth
 
 sv-synth:
 	$(MAKE) -C SystemVerilog synth
 
 bsv-synth:
 	$(MAKE) -C BSV synth
+
+bsc-synth:
+	$(MAKE) -C BSC synth
 
 clean:
 	$(MAKE) -C SystemVerilog clean
