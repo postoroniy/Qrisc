@@ -22,6 +22,7 @@
 import Qrisc_pack::*;
 import Vector::*;
 import FIFOF :: *;
+import RWire::*;
 
 module qrisc32_EX#(
         FIFOF#(Pipe_s) decodeFifo,
@@ -31,22 +32,16 @@ module qrisc32_EX#(
 
     Reg#(Bool)          flagZ <- mkRegA(False);
     Reg#(Bool)          flagC <- mkRegA(False);
-    Reg#(MaybeWord32)   new_address_reg <- mkRegA(Invalid);
-
-    (* descending_urgency = "ex_stage, clear_redirect" *)
-    rule clear_redirect;
-        new_address_reg <= Invalid;
-    endrule
+    RWire#(Word32)      new_address_wire <- mkRWire;
 
     rule ex_stage(decodeFifo.notEmpty && exeFifo.notFull && wbExFifo.notFull);
         let ex_in = decodeFifo.first;
         decodeFifo.deq;
 
         let ex_out = ex_in;
-        MaybeWord32 new_addr = Invalid;
 
         Bit#(33) summ = zeroExtend(ex_in.val_r1) + zeroExtend(ex_in.val_r2);
-        Bit#(33) shl  = zeroExtend(ex_in.val_r1) << ex_in.val_r2;
+        Bit#(33) shl  = {1'b0, ex_in.val_r1} << ex_in.val_r2[4:0];
         Bit#(33) shr  = {ex_in.val_r1, 1'b0} >> ex_in.val_r2;
         Bit#(64) prod = zeroExtend(ex_in.val_r1) * zeroExtend(ex_in.val_r2);
 
@@ -87,12 +82,12 @@ module qrisc32_EX#(
         else if (ex_in.mul_op) begin
             ex_out.val_dst = truncate(prod);
             flagZ_w = (ex_out.val_dst == 0);
-            flagC_w = False;
+            flagC_w = (prod[32] == 1);
         end
         else if (ex_in.shl_op) begin
             ex_out.val_dst = shl[31:0];
             flagZ_w = (ex_out.val_dst == 0);
-            flagC_w = False;
+            flagC_w = (shl[32] == 1);
         end
         else if (ex_in.shr_op) begin
             ex_out.val_dst = shr[32:1];
@@ -126,17 +121,17 @@ module qrisc32_EX#(
             || (ex_in.jmpc  && flagC)
             || (ex_in.jmpnc && !flagC)) begin
             if (!ex_in.ldrf_op) begin
-                new_addr = tagged Valid ex_out.val_dst;
+                new_address_wire.wset(ex_out.val_dst);
             end
         end
-        new_address_reg <= new_addr;
 
         exeFifo.enq(ex_out);
         wbExFifo.enq(ex_out);
     endrule
 
     method MaybeWord32 get_new_address();
-        return new_address_reg;
+        let new_addr = new_address_wire.wget;
+        return isValid(new_addr) ? tagged Valid validValue(new_addr) : Invalid;
     endmethod
 
 endmodule

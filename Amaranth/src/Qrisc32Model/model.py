@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 
+from .isa import AluOp, FlagMode, IncrMode, JumpMode, LoadMode, Opcode, opcode_from_bits
+
 MASK32 = 0xFFFF_FFFF
 
 
@@ -17,16 +19,26 @@ def sext(value: int, bits: int) -> int:
 
 
 def incr_value(code: int) -> tuple[int, bool]:
+    mode = IncrMode(code)
     return {
-        0: (0, False),
-        1: (1, True),
-        2: (2, True),
-        3: (4, True),
-        4: (0, False),
-        5: (-1, True),
-        6: (-2, True),
-        7: (-4, True),
-    }[code]
+        IncrMode.NONE: (0, False),
+        IncrMode.ONE: (1, True),
+        IncrMode.TWO: (2, True),
+        IncrMode.FOUR: (4, True),
+        IncrMode.NONE_ALT: (0, False),
+        IncrMode.NEG_ONE: (-1, True),
+        IncrMode.NEG_TWO: (-2, True),
+        IncrMode.NEG_FOUR: (-4, True),
+    }[mode]
+
+
+def flag_cond(mode: FlagMode, flag_z: bool, flag_c: bool) -> bool:
+    return {
+        FlagMode.Z: flag_z,
+        FlagMode.NZ: not flag_z,
+        FlagMode.C: flag_c,
+        FlagMode.NC: not flag_c,
+    }[mode]
 
 
 def load_words(path: Path) -> list[int]:
@@ -56,10 +68,11 @@ class Qrisc32Model:
         idx = self.pc >> 2
         inst = self.imem[idx] if 0 <= idx < len(self.imem) else 0
         current_pc = self.pc
+        arch_pc = u32(current_pc + 8)
         self.pc = u32(self.pc + 4)
 
-        op = (inst >> 28) & 0xF
-        mode = (inst >> 26) & 0x3
+        op = opcode_from_bits((inst >> 28) & 0xF)
+        mode = LoadMode((inst >> 26) & 0x3)
         dst = inst & 0x1F
         src1 = (inst >> 5) & 0x1F
         src2 = (inst >> 10) & 0x1F
@@ -77,15 +90,15 @@ class Qrisc32Model:
         inc_target: int | None = src2 if incr_en else None
         inc_source = r2
 
-        if op == 0x0:
-            if mode == 0:
+        if op == Opcode.LDR:
+            if mode == LoadMode.REG:
                 write_reg = dst != src1
                 write_value = r1
-            elif mode == 1:
+            elif mode == LoadMode.HIGH:
                 write_reg = True
                 write_value = u32((dst_val & 0x0000_FFFF) | (imm16 << 16))
                 inc_target = None
-            elif mode == 2:
+            elif mode == LoadMode.LOW:
                 write_reg = True
                 write_value = u32((dst_val & 0xFFFF_0000) | imm16)
                 inc_target = None
@@ -95,70 +108,66 @@ class Qrisc32Model:
                 write_value = self.dmem.get(addr >> 2, 0)
                 inc_target = src2 if ((inst >> 25) & 1) else None
                 inc_source = r2
-        elif op == 0x1:
+        elif op == Opcode.STR:
             addr = u32(r1 + offset)
             self.dmem[addr >> 2] = dst_val
             inc_target = src2 if ((inst >> 25) & 1) else None
             inc_source = r2
-        elif op == 0x2:
-            if mode == 0:
+        elif op == Opcode.JMPUNC:
+            jump_mode = JumpMode(mode)
+            if jump_mode == JumpMode.ABS:
                 self.pc = inst & 0x03FF_FFFF
                 inc_target = None
-            elif mode in (1, 2):
-                self.pc = u32(current_pc + offset)
-                if mode == 2:
+            elif jump_mode in (JumpMode.REL, JumpMode.CALL):
+                self.pc = u32(arch_pc + offset)
+                if jump_mode == JumpMode.CALL:
                     write_reg = True
-                    write_value = current_pc
+                    write_value = arch_pc
                 inc_target = src2 if ((inst >> 25) & 1) else None
             else:
                 self.pc = dst_val
                 inc_target = src2 if ((inst >> 25) & 1) else None
-        elif op == 0x3:
-            cond = {
-                0: self.flag_z,
-                1: not self.flag_z,
-                2: self.flag_c,
-                3: not self.flag_c,
-            }[mode]
+        elif op == Opcode.JMPF:
+            cond = flag_cond(FlagMode(mode), self.flag_z, self.flag_c)
             if cond:
-                self.pc = u32(current_pc + offset)
+                self.pc = u32(arch_pc + offset)
             inc_target = src2 if ((inst >> 25) & 1) else None
-        elif op == 0x4:
-            alu = (inst >> 25) & 0x7
-            if alu == 0:
+        elif op == Opcode.ALU:
+            alu = AluOp((inst >> 25) & 0x7)
+            if alu == AluOp.AND:
                 write_reg = True
                 write_value = r1 & r2
                 self.flag_c = False
                 self.flag_z = write_value == 0
-            elif alu == 1:
+            elif alu == AluOp.OR:
                 write_reg = True
                 write_value = r1 | r2
                 self.flag_c = False
                 self.flag_z = write_value == 0
-            elif alu == 2:
+            elif alu == AluOp.XOR:
                 write_reg = True
                 write_value = r1 ^ r2
                 self.flag_c = False
                 self.flag_z = write_value == 0
-            elif alu == 3:
+            elif alu == AluOp.ADD:
                 result = r1 + r2
                 write_reg = True
                 write_value = u32(result)
                 self.flag_c = result > MASK32
                 self.flag_z = write_value == 0
-            elif alu == 4:
+            elif alu == AluOp.MUL:
                 prod = r1 * r2
                 write_reg = True
                 write_value = u32(prod)
                 self.flag_c = False
                 self.flag_z = write_value == 0
-            elif alu == 5:
+            elif alu == AluOp.SHL:
                 shl = (r1 << (r2 & 0x1F)) & ((1 << 33) - 1)
                 write_reg = True
                 write_value = u32(shl)
                 self.flag_c = False
                 self.flag_z = write_value == 0
-            elif alu == 6:
+            elif alu == AluOp.SHR:
                 shift = r2 & 0x1F
                 combined = (r1 << 1) & ((1 << 33) - 1)
                 shr = combined >> shift
@@ -169,13 +178,8 @@ class Qrisc32Model:
             else:
                 self.flag_z = r1 == r2
                 self.flag_c = r1 < r2
-        elif op == 0x5:
-            cond = {
-                0: self.flag_z,
-                1: not self.flag_z,
-                2: self.flag_c,
-                3: not self.flag_c,
-            }[mode]
+        elif op == Opcode.LDRF:
+            cond = flag_cond(FlagMode(mode), self.flag_z, self.flag_c)
             write_reg = True
             write_value = r1 if cond else r2
 
@@ -184,7 +188,7 @@ class Qrisc32Model:
         if inc_target is not None:
             self.regs[inc_target] = u32(inc_source + incr)
 
-    def run(self, max_cycles: int = 4096) -> dict[int, int]:
+    def run(self, max_cycles: int = 100000) -> dict[int, int]:
         seen_terminal = 0
         last_pc = None
         for _ in range(max_cycles):

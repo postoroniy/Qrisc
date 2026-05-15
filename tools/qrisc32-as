@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from qrisc32.asm import main
+
+raise SystemExit(main())

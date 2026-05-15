@@ -19,6 +19,7 @@ VCD_DIR ?= $(BDIR)/vcd
 SMOKE_HEX = $(HEXDIR)/smoke_1024.hex
 SMOKE_INIT_HEX = $(HEXDIR)/smoke_reversed_1024.hex
 AXI_HEX = $(HEXDIR)/axi_smoke_1024.hex
+HAZARDS_HEX = $(HEXDIR)/hazards_1024.hex
 FLAGS_HEX = $(HEXDIR)/flags_1024.hex
 ISA_HEX = $(HEXDIR)/isa_1024.hex
 DMEM_ZERO_HEX = $(HEXDIR)/dmem_zero_1024.hex
@@ -35,9 +36,9 @@ LINT_WAIVERS ?= lint/verilator.vlt
 BSC_TOP = qrisc32
 VERILOG_OUTPUT = $(VDIR)/$(BSC_TOP).v
 
-.PHONY: all smoke flags isa axi test model model-smoke model-flags model-isa model-axi verilog synth lint clean
+.PHONY: all smoke flags isa axi hazards test model model-smoke model-flags model-isa model-axi model-hazards verilog synth lint clean
 
-all: smoke flags isa axi
+all: smoke flags isa axi hazards
 test: all
 
 $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR) $(HEXDIR) $(VCD_DIR):
@@ -75,7 +76,10 @@ isa: $(ISA_HEX) $(DMEM_ZERO_HEX) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR) $(V
 axi: $(AXI_HEX) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR) $(VCD_DIR)
 	$(call RUN_BSC_TEST,mkAxiTest,AxiTest,PASS: AXI smoke dmem\[0\] = 12)
 
-model: model-smoke model-flags model-isa model-axi
+hazards: $(HAZARDS_HEX) $(DMEM_ZERO_HEX) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR) $(VCD_DIR)
+	$(call RUN_BSC_TEST,mkHazardsTest,HazardsTest,PASS: hazard interlock vector)
+
+model: model-smoke model-flags model-isa model-axi model-hazards
 
 model-smoke: $(SMOKE_HEX) $(SMOKE_INIT_HEX) $(RF_ZERO_HEX) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR) $(VCD_DIR)
 	$(call RUN_BSC_TEST,mkModelSmokeTest,ModelSmokeTest,PASS: qrisc32 sort smoke)
@@ -89,7 +93,10 @@ model-isa: $(ISA_HEX) $(DMEM_ZERO_HEX) $(RF_ZERO_HEX) | $(BDIR) $(IDIR) $(VDIR) 
 model-axi: $(AXI_HEX) $(RF_ZERO_HEX) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR) $(VCD_DIR)
 	$(call RUN_BSC_TEST,mkModelAxiTest,ModelAxiTest,PASS: AXI smoke dmem\[0\] = 12)
 
-$(VERILOG_OUTPUT): $(RTL_DIR)/Qrisc32RTL.bs | $(BDIR) $(IDIR) $(VDIR)
+model-hazards: $(HAZARDS_HEX) $(DMEM_ZERO_HEX) $(RF_ZERO_HEX) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR) $(VCD_DIR)
+	$(call RUN_BSC_TEST,mkModelHazardsTest,ModelHazardsTest,PASS: hazard interlock vector)
+
+$(VERILOG_OUTPUT): $(RTL_DIR)/Qrisc32RTL.bs $(RTL_DIR)/Qrisc_pack.bs | $(BDIR) $(IDIR) $(VDIR)
 	$(BSC) $(BSC_VERILOG_FLAGS) -remove-dollar -g $(BSC_TOP) -verilog $(RTL_DIR)/Qrisc32RTL.bs
 	test -s $(VERILOG_OUTPUT)
 
@@ -100,11 +107,12 @@ synth: verilog
 	yosys -s ys
 
 lint: BSC_FLAGS = $(BSC_SOURCE_LINT_FLAGS)
-lint: $(SMOKE_HEX) $(SMOKE_INIT_HEX) $(FLAGS_HEX) $(ISA_HEX) $(DMEM_ZERO_HEX) $(AXI_HEX) $(VERILOG_OUTPUT) $(LINT_WAIVERS) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR)
+lint: $(SMOKE_HEX) $(SMOKE_INIT_HEX) $(FLAGS_HEX) $(ISA_HEX) $(DMEM_ZERO_HEX) $(AXI_HEX) $(HAZARDS_HEX) $(VERILOG_OUTPUT) $(LINT_WAIVERS) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR)
 	$(BSC) $(BSC_SIM_FLAGS) -g mkSmokeTest $(TB_DIR)/SmokeTest.bs
 	$(BSC) $(BSC_SIM_FLAGS) -g mkFlagsTest $(TB_DIR)/FlagsTest.bs
 	$(BSC) $(BSC_SIM_FLAGS) -g mkIsaTest $(TB_DIR)/IsaTest.bs
 	$(BSC) $(BSC_SIM_FLAGS) -g mkAxiTest $(TB_DIR)/AxiTest.bs
+	$(BSC) $(BSC_SIM_FLAGS) -g mkHazardsTest $(TB_DIR)/HazardsTest.bs
 	$(VERILATOR) $(VERILATOR_LINT_FLAGS) $(LINT_WAIVERS) \
 		$(DISTRO)/Verilog/FIFO1.v $(DISTRO)/Verilog/FIFO2.v $(VDIR)/mkQrisc32.v $(VERILOG_OUTPUT) --top-module $(BSC_TOP)
 

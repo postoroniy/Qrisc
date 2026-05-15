@@ -28,6 +28,12 @@ All implemented RTL flows export the same public generated-HDL top module name:
 `qrisc32`.  Source-language constructors may keep their idiomatic names, but
 Verilator and Yosys targets use `qrisc32` consistently.
 
+ISA opcode, sub-opcode, flag, jump, and increment encodings are centralized in
+language-local shared packages: `SystemVerilog/rtl/Qrisc_pack.sv`,
+`BSV/rtl/Qrisc_pack.bsv`, `BSC/rtl/Qrisc_pack.bs`,
+`Clash/src/Qrisc32ISA.hs`, `Amaranth/src/Qrisc32Model/isa.py`, and
+`tools/qrisc32/isa.py`.
+
 ## Main Workflow
 
 Run all implemented simulator checks:
@@ -59,6 +65,9 @@ Run optional generic synthesis checks:
 make synth-generic
 ```
 
+The current generic FPGA synthesis comparison is tracked in
+`doc/rtl_synthesis_compare.md`.
+
 Each implementation also exposes the same local synthesis entry point:
 
 ```sh
@@ -83,6 +92,18 @@ make bsc-lint
 Lint targets check source compilers where available and Verilator lint for RTL
 or generated HDL.  Generated-code warnings are handled through scoped waiver
 files under each implementation's `lint/` directory.
+
+Run opt-in assembler and tiny C compiler checks:
+
+```sh
+make asm-tools
+make asm-test
+make c-test
+make toolchain-test
+```
+
+The qrisc32 toolchain lives under `tools/qrisc32/`.  Generated assembly, hex,
+data images, and VCDs are written under ignored `build/toolchain/` paths.
 
 The explicit parity scripts compare the implemented ports through their public
 test targets:

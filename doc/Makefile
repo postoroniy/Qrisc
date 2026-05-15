@@ -17,6 +17,7 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -f $(BUILD_DIR)/*.aux $(BUILD_DIR)/*.log $(BUILD_DIR)/*.nav $(BUILD_DIR)/*.out
+	rm -f $(BUILD_DIR)/*.snm $(BUILD_DIR)/*.toc $(BUILD_DIR)/*.vrb
 
 distclean: clean

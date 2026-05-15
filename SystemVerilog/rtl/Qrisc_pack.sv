@@ -68,8 +68,65 @@ package Qrisc_pack;
     } pipe_struct_t;
 
 //operations
-parameter[3:0]
-    LDR=4'd0;//LDR Rdst,[Rsrc1],-+Rsrc2
+typedef enum logic [3:0] {
+    OP_LDR    = 4'd0,
+    OP_STR    = 4'd1,
+    OP_JMPUNC = 4'd2,
+    OP_JMPF   = 4'd3,
+    OP_ALU    = 4'd4,
+    OP_LDRF   = 4'd5
+} opcode_t;
+
+typedef enum logic [1:0] {
+    LOAD_REG  = 2'd0,
+    LOAD_HIGH = 2'd1,
+    LOAD_LOW  = 2'd2,
+    LOAD_MEM  = 2'd3
+} load_mode_t;
+
+typedef enum logic [1:0] {
+    JUMP_ABS  = 2'd0,
+    JUMP_REL  = 2'd1,
+    JUMP_CALL = 2'd2,
+    JUMP_RET  = 2'd3
+} jump_mode_t;
+
+typedef enum logic [1:0] {
+    FLAG_Z  = 2'd0,
+    FLAG_NZ = 2'd1,
+    FLAG_C  = 2'd2,
+    FLAG_NC = 2'd3
+} flag_mode_t;
+
+typedef enum logic [2:0] {
+    ALU_AND = 3'd0,
+    ALU_OR  = 3'd1,
+    ALU_XOR = 3'd2,
+    ALU_ADD = 3'd3,
+    ALU_MUL = 3'd4,
+    ALU_SHL = 3'd5,
+    ALU_SHR = 3'd6,
+    ALU_CMP = 3'd7
+} alu_op_t;
+
+typedef enum logic [0:0] {
+    OFFSET_IMM = 1'b0,
+    OFFSET_REG = 1'b1
+} offset_mode_t;
+
+typedef enum logic [2:0] {
+    INCR_NONE     = 3'd0,
+    INCR_ONE      = 3'd1,
+    INCR_TWO      = 3'd2,
+    INCR_FOUR     = 3'd3,
+    INCR_NONE_ALT = 3'd4,
+    DECR_ONE      = 3'd5,
+    DECR_TWO      = 3'd6,
+    DECR_FOUR     = 3'd7
+} incr_mode_t;
+
+localparam opcode_t
+    LDR=OP_LDR;//LDR Rdst,[Rsrc1],-+Rsrc2
     //[31:28]LDR_op
     //[27:26] type of LDR op
     //0- Rdst= Rsrc1
@@ -91,8 +148,8 @@ parameter[3:0]
     //[14:10] src2
     //[9:5]src1
     //[4:0]dst
-parameter[3:0]
-    STR=4'd1;//STR Rdst,[Rsrc1],-+Rsrc2
+localparam opcode_t
+    STR=OP_STR;//STR Rdst,[Rsrc1],-+Rsrc2
     //[31:28]STR_op
     //[27:26] type of STORE op
     //3- [Rsrc1+offset]=Rdst
@@ -111,8 +168,8 @@ parameter[3:0]
     //[14:10] src2
     //[9:5]src1
     //[4:0]dst
-parameter[3:0]
-    JMPUNC=4'd2;//unconditional jump
+localparam opcode_t
+    JMPUNC=OP_JMPUNC;//unconditional jump
     //[31:28]   jump
     //[27:26]   type of jumps
     //0 - jmp   pc[25:0]=code[25:0]
@@ -134,8 +191,8 @@ parameter[3:0]
     //[14:10] src2
     //[9:5]src1
     //[4:0]dst
-parameter[3:0]
-    JMPF=4'd3;//conditional jumps
+localparam opcode_t
+    JMPF=OP_JMPF;//conditional jumps
     //[31:28]   jump
     //[27:26]   type of jumps
     //0 - jmpz  pc=pc+offset
@@ -158,8 +215,8 @@ parameter[3:0]
     //[9:5]src1
     //[4:0]dst
 
-parameter[3:0]
-    ALU=4'd4;// AND, OR, XOR,
+localparam opcode_t
+    ALU=OP_ALU;// AND, OR, XOR,
     // ADD,  MUL,
     // SHR, SHL
     //[31:28]ALU_op
@@ -185,8 +242,8 @@ parameter[3:0]
     //[9:5]src1
     //[4:0]dst
 //} OPCODE;
-parameter[3:0]
-    LDRF=4'd5;//LDRF Rdst,Rsrc1,-+Rsrc2
+localparam opcode_t
+    LDRF=OP_LDRF;//LDRF Rdst,Rsrc1,-+Rsrc2
     //[31:28]LDRF_op
     //[27:26] type of LDRF op
     //0-LDRZ Rdst=Rsrc1 if z=1, otherwise Rdst=Rsrc2
@@ -207,86 +264,86 @@ parameter[3:0]
     //[4:0]dst
 
 
-parameter[4+1:0]    NOP     ='0;
+localparam logic[4+1:0]    NOP     ='0;
 //ldr
-parameter[4+1:0]    LDRR    ={LDR,2'b00};
-parameter[4+6:0]    LDRH    ={LDR,7'b01_0_000_0};
-parameter[4+6:0]    LDRL    ={LDR,7'b10_0_000_0};
-parameter[4+1:0]    LDRP    ={LDR,2'b11};
+localparam logic[4+1:0]    LDRR    ={LDR,LOAD_REG};
+localparam logic[4+6:0]    LDRH    ={LDR,LOAD_HIGH,OFFSET_IMM,INCR_NONE,1'b0};
+localparam logic[4+6:0]    LDRL    ={LDR,LOAD_LOW,OFFSET_IMM,INCR_NONE,1'b0};
+localparam logic[4+1:0]    LDRP    ={LDR,LOAD_MEM};
 
 //str
-parameter[4+1:0]    STRP    ={STR,2'b11};
+localparam logic[4+1:0]    STRP    ={STR,LOAD_MEM};
 
 //alu
-parameter[4+2:0]    AND     ={ALU,3'd0};
-parameter[4+2:0]    OR      ={ALU,3'd1};
-parameter[4+2:0]    XOR     ={ALU,3'd2};
-parameter[4+2:0]    ADD     ={ALU,3'd3};
-parameter[4+2:0]    MUL     ={ALU,3'd4};
-parameter[4+2:0]    SHL     ={ALU,3'd5};
-parameter[4+2:0]    SHR     ={ALU,3'd6};
-parameter[4+2:0]    CMP     ={ALU,3'd7};
+localparam logic[4+2:0]    AND     ={ALU,ALU_AND};
+localparam logic[4+2:0]    OR      ={ALU,ALU_OR};
+localparam logic[4+2:0]    XOR     ={ALU,ALU_XOR};
+localparam logic[4+2:0]    ADD     ={ALU,ALU_ADD};
+localparam logic[4+2:0]    MUL     ={ALU,ALU_MUL};
+localparam logic[4+2:0]    SHL     ={ALU,ALU_SHL};
+localparam logic[4+2:0]    SHR     ={ALU,ALU_SHR};
+localparam logic[4+2:0]    CMP     ={ALU,ALU_CMP};
 
 //jmp
-parameter[4+1:0]    JMP     ={JMPUNC,2'd0};
-parameter[4+1:0]    JMPR    ={JMPUNC,2'd1};
-parameter[4+1:0]    CALL    ={JMPUNC,2'd2};
-parameter[4+1:0]    RET     ={JMPUNC,2'd3};
+localparam logic[4+1:0]    JMP     ={JMPUNC,JUMP_ABS};
+localparam logic[4+1:0]    JMPR    ={JMPUNC,JUMP_REL};
+localparam logic[4+1:0]    CALL    ={JMPUNC,JUMP_CALL};
+localparam logic[4+1:0]    RET     ={JMPUNC,JUMP_RET};
 
-parameter[4+1:0]    JMPZ    ={JMPF,2'd0};
-parameter[4+1:0]    JMPNZ   ={JMPF,2'd1};
-parameter[4+1:0]    JMPC    ={JMPF,2'd2};
-parameter[4+1:0]    JMPNC   ={JMPF,2'd3};
+localparam logic[4+1:0]    JMPZ    ={JMPF,FLAG_Z};
+localparam logic[4+1:0]    JMPNZ   ={JMPF,FLAG_NZ};
+localparam logic[4+1:0]    JMPC    ={JMPF,FLAG_C};
+localparam logic[4+1:0]    JMPNC   ={JMPF,FLAG_NC};
 
 
-parameter[4+2:0]    LDRZ    ={LDRF,2'd0,1'b0};
-parameter[4+2:0]    LDRNZ   ={LDRF,2'd1,1'b0};
-parameter[4+2:0]    LDRC    ={LDRF,2'd2,1'b0};
-parameter[4+2:0]    LDRNC   ={LDRF,2'd3,1'b0};
+localparam logic[4+2:0]    LDRZ    ={LDRF,FLAG_Z,1'b0};
+localparam logic[4+2:0]    LDRNZ   ={LDRF,FLAG_NZ,1'b0};
+localparam logic[4+2:0]    LDRC    ={LDRF,FLAG_C,1'b0};
+localparam logic[4+2:0]    LDRNC   ={LDRF,FLAG_NC,1'b0};
 
 //common
-parameter[0:0]      OFFSET_CODE  =1'b0;
-parameter[0:0]      OFFSET_R     =1'b1;
+localparam offset_mode_t  OFFSET_CODE  = OFFSET_IMM;
+localparam offset_mode_t  OFFSET_R     = OFFSET_REG;
 
-parameter[2:0]      INCR_0=3'b000;
-parameter[2:0]      DECR_0=3'b000;
-parameter[2:0]      INCR_1=3'b001;
-parameter[2:0]      INCR_2=3'b010;
-parameter[2:0]      INCR_4=3'b011;
-parameter[2:0]      DECR_1=3'b101;
-parameter[2:0]      DECR_2=3'b110;
-parameter[2:0]      DECR_4=3'b111;
+localparam incr_mode_t    INCR_0=INCR_NONE;
+localparam incr_mode_t    DECR_0=INCR_NONE;
+localparam incr_mode_t    INCR_1=INCR_ONE;
+localparam incr_mode_t    INCR_2=INCR_TWO;
+localparam incr_mode_t    INCR_4=INCR_FOUR;
+localparam incr_mode_t    DECR_1=DECR_ONE;
+localparam incr_mode_t    DECR_2=DECR_TWO;
+localparam incr_mode_t    DECR_4=DECR_FOUR;
 
-parameter[4:0]      R0    =5'd0;
-parameter[4:0]      R1    =5'd1;
-parameter[4:0]      R2    =5'd2;
-parameter[4:0]      R3    =5'd3;
-parameter[4:0]      R4    =5'd4;
-parameter[4:0]      R5    =5'd5;
-parameter[4:0]      R6    =5'd6;
-parameter[4:0]      R7    =5'd7;
-parameter[4:0]      R8    =5'd8;
-parameter[4:0]      R9    =5'd9;
-parameter[4:0]      R10   =5'd10;
-parameter[4:0]      R11   =5'd11;
-parameter[4:0]      R12   =5'd12;
-parameter[4:0]      R13   =5'd13;
-parameter[4:0]      R14   =5'd14;
-parameter[4:0]      R15   =5'd15;
-parameter[4:0]      R16   =5'd16;
-parameter[4:0]      R17   =5'd17;
-parameter[4:0]      R18   =5'd18;
-parameter[4:0]      R19   =5'd19;
-parameter[4:0]      R20   =5'd20;
-parameter[4:0]      R21   =5'd21;
-parameter[4:0]      R22   =5'd22;
-parameter[4:0]      R23   =5'd23;
-parameter[4:0]      R24   =5'd24;
-parameter[4:0]      R25   =5'd25;
-parameter[4:0]      R26   =5'd26;
-parameter[4:0]      R27   =5'd27;
-parameter[4:0]      R28   =5'd28;
-parameter[4:0]      R29   =5'd29;
-parameter[4:0]      R30   =5'd30;
-parameter[4:0]      R31   =5'd31;
+localparam logic[4:0]      R0    =5'd0;
+localparam logic[4:0]      R1    =5'd1;
+localparam logic[4:0]      R2    =5'd2;
+localparam logic[4:0]      R3    =5'd3;
+localparam logic[4:0]      R4    =5'd4;
+localparam logic[4:0]      R5    =5'd5;
+localparam logic[4:0]      R6    =5'd6;
+localparam logic[4:0]      R7    =5'd7;
+localparam logic[4:0]      R8    =5'd8;
+localparam logic[4:0]      R9    =5'd9;
+localparam logic[4:0]      R10   =5'd10;
+localparam logic[4:0]      R11   =5'd11;
+localparam logic[4:0]      R12   =5'd12;
+localparam logic[4:0]      R13   =5'd13;
+localparam logic[4:0]      R14   =5'd14;
+localparam logic[4:0]      R15   =5'd15;
+localparam logic[4:0]      R16   =5'd16;
+localparam logic[4:0]      R17   =5'd17;
+localparam logic[4:0]      R18   =5'd18;
+localparam logic[4:0]      R19   =5'd19;
+localparam logic[4:0]      R20   =5'd20;
+localparam logic[4:0]      R21   =5'd21;
+localparam logic[4:0]      R22   =5'd22;
+localparam logic[4:0]      R23   =5'd23;
+localparam logic[4:0]      R24   =5'd24;
+localparam logic[4:0]      R25   =5'd25;
+localparam logic[4:0]      R26   =5'd26;
+localparam logic[4:0]      R27   =5'd27;
+localparam logic[4:0]      R28   =5'd28;
+localparam logic[4:0]      R29   =5'd29;
+localparam logic[4:0]      R30   =5'd30;
+localparam logic[4:0]      R31   =5'd31;
 endpackage

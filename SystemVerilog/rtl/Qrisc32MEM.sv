@@ -27,10 +27,12 @@ module Qrisc32MEM(
         input Qrisc_pack::pipe_struct_t   pipe_mem_in,
         output Qrisc_pack::pipe_struct_t  pipe_mem_out,
         output logic        pipe_stall,
+        output logic        load_pending,
+        output logic[4:0]   load_pending_dst,
         input logic         verbose
     );
 
-    Qrisc_pack::pipe_struct_t pipe_mem_in0,pipe_mem_in1;
+    Qrisc_pack::pipe_struct_t pending_read;
 
     logic       rd_stall;
     logic       wr_stall;
@@ -39,6 +41,11 @@ module Qrisc32MEM(
     always_comb begin
         addr_w = pipe_mem_in.val_r1;
         pipe_stall = rd_stall | wr_stall;
+        load_pending = rd_stall || pipe_mem_in.read_mem;
+        if(rd_stall)
+            load_pending_dst = pending_read.dst_r;
+        else
+            load_pending_dst = pipe_mem_in.dst_r;
     end
 
     always_ff@(posedge clk or posedge areset)
@@ -48,57 +55,36 @@ module Qrisc32MEM(
         data_read_mem.wr<='0;
         rd_stall<=0;
         pipe_mem_out<='0;
-        pipe_mem_in0<='0;
-        pipe_mem_in1<='0;
+        pending_read<='0;
     end else begin
-        if(pipe_mem_in.read_mem==1)
-            data_read_mem.address_r<=addr_w;//asserted addr
-
-        data_read_mem.rd<=pipe_mem_in.read_mem;//||pipe_mem_in0.read_mem||pipe_mem_in1.read_mem;
-        pipe_mem_in0<=pipe_mem_in;//addr asserted
-        pipe_mem_in1<=pipe_mem_in0;//just wait cycle
-
-        if(data_read_mem.wait_req==0 && pipe_mem_in1.read_mem==1)begin
-        // it has been read ok(sram access is 2 cycles)
-            //if(~pipe_mem_in.write_reg)
-            begin
+        if(rd_stall) begin
+            data_read_mem.rd<=1'b1;
+            if(!data_read_mem.wait_req) begin
+// synthesis translate_off
                 if(verbose)
                     $display("[MEM stage] access to dst register");
-                rd_stall<=0;
-                pipe_mem_out<=pipe_mem_in;
-                pipe_mem_out.dst_r<=pipe_mem_in1.dst_r;
+// synthesis translate_on
+                rd_stall<=1'b0;
+                data_read_mem.rd<=1'b0;
+                pipe_mem_out<=pending_read;
+                pipe_mem_out.dst_r<=pending_read.dst_r;
                 pipe_mem_out.val_dst<=data_read_mem.data_r;//result of read
-                pipe_mem_out.write_reg<=1;
+                pipe_mem_out.write_reg<=1'b1;
             end
-            //else
-            //if(~pipe_mem_in.incr_r2_enable)
-            //begin
-            //    if(verbose)
-            //        $display("[MEM stage] access to src2 register");
-            //    rd_stall<=0;
-            //    pipe_mem_out<=pipe_mem_in;
-            //
-            //    pipe_mem_out.src_r2<=pipe_mem_in1.dst_r;
-            //    pipe_mem_out.incr_r2_enable<=1;
-            //    pipe_mem_out.val_r2<=data_read_mem.data_r;//result of read
-            //end
-            //else
-            //begin
-            //    if(verbose)
-            //        $display("[MEM stage] access to dst register and STALL pipeline!");
-            //    rd_stall<=1;
-            //    pipe_mem_out<=pipe_mem_in1;
-            //    pipe_mem_out.val_dst<=data_read_mem.data_r;//result of read
-            //end
+        end else if(pipe_mem_in.read_mem==1) begin
+            data_read_mem.address_r<=addr_w;//asserted addr
+            data_read_mem.rd<=1'b1;
+            pending_read<=pipe_mem_in;
+            rd_stall<=1'b1;
+            pipe_mem_out<='0;
         end else begin
-            rd_stall<=0;
-            //if previous op was stalled
-            if(rd_stall)begin
-                pipe_mem_out<=pipe_mem_in0;
-            end else begin
+            data_read_mem.rd<=1'b0;
+            if(!wr_stall) begin
                 pipe_mem_out<=pipe_mem_in;
                 if(pipe_mem_in.read_mem)//if read access then
                     pipe_mem_out.write_reg<='0;//clear write bit register
+            end else begin
+                pipe_mem_out<='0;
             end
         end
     end
@@ -111,11 +97,17 @@ module Qrisc32MEM(
         data_write_mem.wr<='0;
         wr_stall<='0;
     end else begin
-        if(pipe_mem_in.write_mem) begin
+        if(wr_stall) begin
+            data_write_mem.wr<=1'b1;
+            if(!data_write_mem.wait_req) begin
+                data_write_mem.wr<=1'b0;
+                wr_stall<=1'b0;
+            end
+        end else if(pipe_mem_in.write_mem) begin
             data_write_mem.address_r<=addr_w;
             data_write_mem.data_w<=pipe_mem_in.val_dst;
-            data_write_mem.wr<=1;
-            wr_stall<=0;
+            data_write_mem.wr<=1'b1;
+            wr_stall<=1'b1;
         end else begin
             data_write_mem.wr<='0;
             wr_stall<=0;

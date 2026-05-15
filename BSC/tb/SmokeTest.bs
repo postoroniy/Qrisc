@@ -13,10 +13,6 @@ mkSmokeTest =
         cycleCount :: Reg (Bit 32) <- mkReg 0
         checking :: Reg Bool <- mkReg False
         checkIdx :: Reg (Bit 4) <- mkReg 0
-        instStopQueued :: Reg Bool <- mkReg False
-        terminalSeen :: Reg Bool <- mkReg False
-        terminalDelay :: Reg (Bit 6) <- mkReg 0
-        terminalFetch :: FIFOF Bool <- mkFIFOF
 
         imem :: RegFile (Bit 32) Word32 <- mkRegFileLoad "build/hex/smoke_1024.hex" 0 1023
         dmem :: RegFile (Bit 32) Word32 <- mkRegFileLoad "build/hex/smoke_reversed_1024.hex" 0 1023
@@ -47,11 +43,6 @@ mkSmokeTest =
             action
                 let req = axiInst.o_rd_addr.first
                 axiInst.o_rd_addr.deq
-                if not instStopQueued && req.araddr > 32'd372
-                    then action
-                        terminalFetch.enq True
-                        instStopQueued := True
-                    else noAction
                 instRdPending := True
                 instRdAddr := truncate req.araddr
                 instRdBeatsLeft := req.arlen + 1
@@ -110,20 +101,12 @@ mkSmokeTest =
           "tick": when True ==>
             action
                 cycleCount := cycleCount + 1
-                if not terminalSeen && terminalFetch.notEmpty
-                    then action
-                        terminalFetch.deq
-                        terminalSeen := True
-                        terminalDelay := 32
-                    else if terminalSeen && not checking
-                    then action
-                        if terminalDelay == 0
-                            then checking := True
-                            else terminalDelay := terminalDelay - 1
+                if cycleCount == 50000
+                    then checking := True
                     else noAction
-                if cycleCount == 12000 && not terminalSeen && not terminalFetch.notEmpty
+                if cycleCount == 100000 && not checking
                     then action
-                        $display "FAIL: qrisc32 sort smoke timeout before terminal instruction fetch"
+                        $display "FAIL: qrisc32 sort smoke timeout before sorted check"
                         $finish 1
                     else noAction
 

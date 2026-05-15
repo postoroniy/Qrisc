@@ -11,12 +11,17 @@ SRC_SMOKE=$(TB_DIR)/axi_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32SmokeTb.sv
 SRC_FLAGS=$(TB_DIR)/axi_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32FlagsTb.sv
 SRC_ISA=$(TB_DIR)/axi_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32IsaTb.sv
 SRC_AXI=$(TB_DIR)/axi_checked_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32AxiTb.sv
+SRC_TOOLCHAIN=$(TB_DIR)/axi_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32ToolchainTb.sv
 
 TB_BUILD=$(BUILD_DIR)/legacy
 SMOKE_BUILD=$(BUILD_DIR)/smoke
 FLAGS_BUILD=$(BUILD_DIR)/flags
 ISA_BUILD=$(BUILD_DIR)/isa
 AXI_BUILD=$(BUILD_DIR)/axi
+TOOLCHAIN_BUILD=$(BUILD_DIR)/toolchain
+HAZARDS_BUILD=$(BUILD_DIR)/hazards
+GEN_TB_DIR=build/tb
+HAZARDS_TB_DIR=$(GEN_TB_DIR)/hazards
 
 VERILATOR_CFLAGS ?= -O0 -x-assign 0 --trace -Wno-fatal -Wno-lint -Wno-UNOPTFLAT -I$(RTL_DIR) -I$(TB_DIR)
 VERILATOR_LINT_FLAGS ?= --lint-only -Wall -I$(RTL_DIR) -I$(TB_DIR)
@@ -25,10 +30,10 @@ LINT_WAIVERS ?= lint/verilator.vlt
 VERILATOR_THREADS ?=2
 VERILATOR_ENV ?= CCACHE_DISABLE=1
 
-all: smoke flags isa axi
+all: smoke flags isa axi hazards
 
-$(VCD_DIR):
-	mkdir -p $(VCD_DIR)
+$(VCD_DIR) $(HAZARDS_TB_DIR):
+	mkdir -p $@
 
 $(TB_BUILD)/Vqrisc32_tb: $(SRC) $(CPP_DIR)/Qrisc32Tb.cpp
 	mkdir -p $(TB_BUILD)
@@ -42,10 +47,10 @@ $(SMOKE_BUILD)/Vqrisc32_smoke_tb: $(SRC_SMOKE) $(CPP_DIR)/Qrisc32SmokeTb.cpp
 	mkdir -p $(SMOKE_BUILD)
 	$(VERILATOR_ENV) verilator --cc --exe $(VERILATOR_CFLAGS) $(SRC_SMOKE) --Mdir $(SMOKE_BUILD) --threads $(VERILATOR_THREADS) --build $(CPP_DIR)/Qrisc32SmokeTb.cpp --top qrisc32_smoke_tb
 
-smoke: $(TB_BUILD)/Vqrisc32_tb | $(VCD_DIR)
-	rm -f $(VCD_DIR)/qrisc32_tb.vcd
-	./$(TB_BUILD)/Vqrisc32_tb
-	test -s $(VCD_DIR)/qrisc32_tb.vcd
+smoke: $(SMOKE_BUILD)/Vqrisc32_smoke_tb | $(VCD_DIR)
+	rm -f $(VCD_DIR)/qrisc32_smoke_tb.vcd
+	./$(SMOKE_BUILD)/Vqrisc32_smoke_tb
+	test -s $(VCD_DIR)/qrisc32_smoke_tb.vcd
 
 $(FLAGS_BUILD)/Vqrisc32_flags_tb: $(SRC_FLAGS) $(CPP_DIR)/Qrisc32FlagsTb.cpp
 	mkdir -p $(FLAGS_BUILD)
@@ -74,6 +79,25 @@ axi: $(AXI_BUILD)/Vqrisc32_axi_tb | $(VCD_DIR)
 	./$(AXI_BUILD)/Vqrisc32_axi_tb
 	test -s $(VCD_DIR)/qrisc32_axi_tb.vcd
 
+$(TOOLCHAIN_BUILD)/Vqrisc32_toolchain_tb: $(SRC_TOOLCHAIN) $(CPP_DIR)/Qrisc32ToolchainTb.cpp
+	mkdir -p $(TOOLCHAIN_BUILD)
+	$(VERILATOR_ENV) verilator --cc --exe $(VERILATOR_CFLAGS) $(SRC_TOOLCHAIN) --Mdir $(TOOLCHAIN_BUILD) --threads $(VERILATOR_THREADS) --build $(CPP_DIR)/Qrisc32ToolchainTb.cpp --top qrisc32_toolchain_tb
+
+toolchain-bench: $(TOOLCHAIN_BUILD)/Vqrisc32_toolchain_tb
+
+$(HAZARDS_TB_DIR)/.stamp: ../Clash/tb/gen_vector_bench.py ../tests/vectors.json | $(HAZARDS_TB_DIR)
+	python3 ../Clash/tb/gen_vector_bench.py --vector hazards --manifest ../tests/vectors.json --out-dir $(HAZARDS_TB_DIR) --vcd-dir $(VCD_DIR)
+	touch $@
+
+$(HAZARDS_BUILD)/Vqrisc32_hazards_tb: $(TB_DIR)/axi_checked_mem.sv $(RTL_SRC) $(HAZARDS_TB_DIR)/.stamp
+	mkdir -p $(HAZARDS_BUILD)
+	$(VERILATOR_ENV) verilator --cc --exe $(VERILATOR_CFLAGS) $(TB_DIR)/axi_checked_mem.sv $(RTL_SRC) $(HAZARDS_TB_DIR)/qrisc32_hazards_tb.sv --Mdir $(HAZARDS_BUILD) --threads $(VERILATOR_THREADS) --build $(HAZARDS_TB_DIR)/qrisc32_hazards_tb.cpp --top qrisc32_hazards_tb
+
+hazards: $(HAZARDS_BUILD)/Vqrisc32_hazards_tb | $(VCD_DIR)
+	rm -f $(VCD_DIR)/hazards.vcd
+	./$(HAZARDS_BUILD)/Vqrisc32_hazards_tb
+	test -s $(VCD_DIR)/hazards.vcd
+
 synth: $(RTL_SRC) ys
 	mkdir -p build/yosys
 	yosys -s ys
@@ -84,4 +108,4 @@ lint: $(RTL_SRC) $(LINT_WAIVERS)
 clean:
 	rm -rf build *.vcd obj_dir yosys_qrisc32*
 
-.PHONY: all smoke flags isa axi synth lint clean
+.PHONY: all smoke flags isa axi hazards toolchain-bench synth lint clean

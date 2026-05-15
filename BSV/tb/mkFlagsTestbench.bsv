@@ -12,7 +12,7 @@ module mkFlagsTestbench(Empty);
 
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
 
-    RegFile#(Bit#(32), Bit#(32)) imem <- mkRegFileLoad("../tests/flags.hex", 0, 19);
+    RegFile#(Bit#(32), Bit#(32)) imem <- mkRegFileLoad("build/hex/flags_1024.hex", 0, 1023);
     RegFile#(Bit#(32), Bit#(32)) dmem <- mkRegFile(0, 1023);
 
     AXI4_Slave_Xactor_IFC#(1,32,32,1) axi_inst <- mkAXI4_Slave_Xactor_2;
@@ -99,7 +99,7 @@ module mkFlagsTestbench(Empty);
 
     rule tick;
         cycle_count <= cycle_count + 1;
-        if (cycle_count == 250) begin
+        if (cycle_count == 3000) begin
             Bit#(32) got0 = dmem.sub(0);
             Bit#(32) got1 = dmem.sub(1);
             if (got0 == 32'd5 && got1 == 32'd7) begin

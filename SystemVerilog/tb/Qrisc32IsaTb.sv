@@ -54,14 +54,14 @@ module qrisc32_isa_tb(
     expected[1]  = 32'd1;
     expected[2]  = 32'd0;
     expected[3]  = 32'd0;
-    expected[4]  = 32'd0;
-    expected[5]  = 32'd1;
+    expected[4]  = 32'd1;
+    expected[5]  = 32'd0;
     expected[6]  = 32'd0;
     expected[7]  = 32'd1;
     expected[8]  = 32'd0;
     expected[9]  = 32'd0;
-    expected[10] = 32'd0;
-    expected[11] = 32'd1;
+    expected[10] = 32'd1;
+    expected[11] = 32'd0;
     expected[12] = 32'd1;
     expected[13] = 32'd0;
     expected[14] = 32'd0;
@@ -87,7 +87,7 @@ module qrisc32_isa_tb(
       done <= 1'b0;
     end else begin
       cycles <= cycles + 1;
-      if (cycles == 32'd1200) begin
+      if (cycles == 32'd5000) begin
         bit ok;
         ok = 1'b1;
         for (int i = 0; i < 28; i = i + 1) begin

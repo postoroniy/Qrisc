@@ -123,7 +123,10 @@ module qrisc32_smoke_tb(
       done <= 1'b0;
     end else begin
       cycles <= cycles + 1;
-      if (cycles == 32'd900) begin
+      if (cycles > 32'd20 && sorted_dmem()) begin
+        $display("PASS: qrisc32 sort smoke");
+        done <= 1'b1;
+      end else if (cycles == 32'd50000) begin
         if (sorted_dmem()) begin
           $display("PASS: qrisc32 sort smoke");
         end else begin

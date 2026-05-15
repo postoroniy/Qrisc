@@ -4,6 +4,7 @@ package Qrisc32RTL(
 
 import AXI4_Types
 import FIFOF
+import Qrisc_pack
 import Semi_FIFOF
 import Vector
 
@@ -17,19 +18,6 @@ interface QriscIfc =
 data CoreState = FetchReq | FetchResp | Decode | Execute | DataReadResp | DataWriteResp | WriteBack
   deriving (Bits, Eq)
 
-opLdr :: Bit 4
-opLdr    = 4'h0
-opStr :: Bit 4
-opStr    = 4'h1
-opJmpUnc :: Bit 4
-opJmpUnc = 4'h2
-opJmpF :: Bit 4
-opJmpF   = 4'h3
-opAlu :: Bit 4
-opAlu    = 4'h4
-opLdrF :: Bit 4
-opLdrF   = 4'h5
-
 sext15 :: Bit 15 -> Word32
 sext15 imm =
     let signed :: Int 15
@@ -41,18 +29,6 @@ sext15 imm =
 zext26 :: Bit 26 -> Word32
 zext26 imm = zeroExtend imm
 
-incrValue :: Bit 3 -> (Int 4, Bool)
-incrValue code =
-    case code of
-        0 -> (0, False)
-        1 -> (1, True)
-        2 -> (2, True)
-        3 -> (4, True)
-        4 -> (0, False)
-        5 -> ((0 - 1), True)
-        6 -> ((0 - 2), True)
-        _ -> ((0 - 4), True)
-
 incWord :: Word32 -> Int 4 -> Word32
 incWord source incr =
     let sourceInt :: Int 32
@@ -60,14 +36,6 @@ incWord source incr =
         incrInt :: Int 32
         incrInt = extend incr
     in pack (sourceInt + incrInt)
-
-flagCond :: Bit 2 -> Bool -> Bool -> Bool
-flagCond mode z c =
-    case mode of
-        0 -> z
-        1 -> not z
-        2 -> c
-        _ -> not c
 
 rdAddr :: Word32 -> AXI4_Rd_Addr 1 32 1
 rdAddr addr =
@@ -199,14 +167,20 @@ mkQrisc32 =
             action
                 let inst :: Word32
                     inst = instReg
-                    currentPc :: Word32
-                    currentPc = pc
+                    archPc :: Word32
+                    archPc = pc + 8
                     nextPcDefault :: Word32
                     nextPcDefault = pc + 4
-                    op :: Bit 4
-                    op = inst[31:28]
-                    mode :: Bit 2
-                    mode = inst[27:26]
+                    opcode :: Opcode
+                    opcode = unpack inst[31:28]
+                    loadMode :: LoadMode
+                    loadMode = unpack inst[27:26]
+                    jumpMode :: JumpMode
+                    jumpMode = unpack inst[27:26]
+                    flagMode :: FlagMode
+                    flagMode = unpack inst[27:26]
+                    aluOp :: AluOp
+                    aluOp = unpack inst[27:25]
                     dst :: RegIdx
                     dst = inst[4:0]
                     src1 :: RegIdx
@@ -217,7 +191,7 @@ mkQrisc32 =
                     imm16 = inst[20:5]
                     off15 :: Bit 15
                     off15 = inst[24:10]
-                    incrInfo = incrValue inst[24:22]
+                    incrInfo = incrValue (unpack inst[24:22])
                     incr = tpl_1 incrInfo
                     incrEnDefault = tpl_2 incrInfo
                     r1 :: Word32
@@ -228,18 +202,18 @@ mkQrisc32 =
                     dstVal = rfRead dst
                     offset :: Word32
                     offset = if inst[25:25] == 1 then r2 else sext15 off15
-                case op of
-                    4'h0 ->
-                        case mode of
-                            0 ->
+                case opcode of
+                    OpLdr ->
+                        case loadMode of
+                            LoadReg ->
                                 if dst /= src1
                                     then finishWrite nextPcDefault dst r1 incrEnDefault src2 r2 incr
                                     else finishNoWrite nextPcDefault incrEnDefault src2 r2 incr
-                            1 ->
+                            LoadHigh ->
                                 finishWrite nextPcDefault dst ((imm16 ++ dstVal[15:0]) :: Word32) False src2 r2 incr
-                            2 ->
+                            LoadLow ->
                                 finishWrite nextPcDefault dst ((dstVal[31:16] ++ imm16) :: Word32) False src2 r2 incr
-                            _ ->
+                            LoadMem ->
                                 if masterData.i_rd_addr.notFull
                                     then action
                                         let addr :: Word32
@@ -250,7 +224,7 @@ mkQrisc32 =
                                         armPending nextPcDefault incEn src2 r2 incr
                                         state := DataReadResp
                                     else noAction
-                    4'h1 ->
+                    OpStr ->
                         if masterData.i_wr_addr.notFull && masterData.i_wr_data.notFull
                             then action
                                 let addr :: Word32
@@ -261,63 +235,63 @@ mkQrisc32 =
                                 armPending nextPcDefault incEn src2 r2 incr
                                 state := DataWriteResp
                             else noAction
-                    4'h2 ->
-                        case mode of
-                            0 ->
+                    OpJmpUnc ->
+                        case jumpMode of
+                            JumpAbs ->
                                 finishNoWrite (zext26 inst[25:0]) False src2 r2 incr
-                            1 ->
+                            JumpRel ->
                                 let incEn = inst[25:25] == 1
-                                in finishNoWrite (currentPc + offset) incEn src2 r2 incr
-                            2 ->
+                                in finishNoWrite (archPc + offset) incEn src2 r2 incr
+                            JumpCall ->
                                 let incEn = inst[25:25] == 1
-                                in finishWrite (currentPc + offset) dst currentPc incEn src2 r2 incr
-                            _ ->
+                                in finishWrite (archPc + offset) dst archPc incEn src2 r2 incr
+                            JumpRet ->
                                 let incEn = inst[25:25] == 1
                                 in finishNoWrite dstVal incEn src2 r2 incr
-                    4'h3 ->
-                        let cond = flagCond mode flagZ flagC
-                            nextPc = if cond then currentPc + offset else nextPcDefault
+                    OpJmpF ->
+                        let cond = flagCond flagMode flagZ flagC
+                            nextPc = if cond then archPc + offset else nextPcDefault
                             incEn = inst[25:25] == 1
                         in finishNoWrite nextPc incEn src2 r2 incr
-                    4'h4 ->
-                        case inst[27:25] of
-                            0 ->
+                    OpAlu ->
+                        case aluOp of
+                            AluAnd ->
                                 let value = r1 & r2
                                 in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) False
-                            1 ->
+                            AluOr ->
                                 let value = r1 | r2
                                 in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) False
-                            2 ->
+                            AluXor ->
                                 let value = r1 ^ r2
                                 in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) False
-                            3 ->
+                            AluAdd ->
                                 let result :: Bit 33
                                     result = zeroExtend r1 + zeroExtend r2
                                     value :: Word32
                                     value = result[31:0]
                                 in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) (result[32:32] == 1)
-                            4 ->
+                            AluMul ->
                                 let prod :: Bit 64
                                     prod = zeroExtend r1 * zeroExtend r2
                                     value :: Word32
                                     value = prod[31:0]
-                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) False
-                            5 ->
+                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) (prod[32:32] == 1)
+                            AluShl ->
                                 let shl :: Bit 33
                                     shl = zeroExtend r1 << r2[4:0]
                                     value :: Word32
                                     value = shl[31:0]
-                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) False
-                            6 ->
+                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) (shl[32:32] == 1)
+                            AluShr ->
                                 let shr :: Bit 33
                                     shr = (r1 ++ 1'b0) >> r2[4:0]
                                     value :: Word32
                                     value = shr[32:1]
                                 in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) (shr[0:0] == 1)
-                            _ ->
+                            AluCmp ->
                                 finishFlagsOnly nextPcDefault incrEnDefault src2 r2 incr (r1 == r2) (r1 < r2)
-                    4'h5 ->
-                        let cond = flagCond mode flagZ flagC
+                    OpLdrF ->
+                        let cond = flagCond flagMode flagZ flagC
                             value = if cond then r1 else r2
                         in finishWrite nextPcDefault dst value incrEnDefault src2 r2 incr
                     _ ->

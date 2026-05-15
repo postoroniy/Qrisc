@@ -1,9 +1,11 @@
 .PHONY: all test axi \
-	sv-smoke sv-flags sv-isa sv-axi \
-	bsv-smoke bsv-flags bsv-isa bsv-axi \
-	amaranth amaranth-venv amaranth-smoke amaranth-flags amaranth-isa amaranth-axi \
-	clash clash-install clash-version clash-smoke clash-flags clash-isa clash-axi \
-	bsc bsc-smoke bsc-flags bsc-isa bsc-axi \
+	sv-smoke sv-flags sv-isa sv-axi sv-hazards \
+	bsv-smoke bsv-flags bsv-isa bsv-axi bsv-hazards \
+	amaranth amaranth-venv amaranth-smoke amaranth-flags amaranth-isa amaranth-axi amaranth-hazards \
+	clash clash-install clash-version clash-smoke clash-flags clash-isa clash-axi clash-hazards \
+	bsc bsc-smoke bsc-flags bsc-isa bsc-axi bsc-hazards \
+	hazards \
+	asm-tools asm-test c-test toolchain-test \
 	lint sv-lint bsv-lint amaranth-lint clash-lint bsc-lint \
 	synth-generic sv-synth bsv-synth amaranth-synth clash-synth bsc-synth clean
 
@@ -13,9 +15,11 @@ test: sv-smoke sv-flags sv-isa sv-axi \
 	bsv-smoke bsv-flags bsv-isa bsv-axi \
 	amaranth-smoke amaranth-flags amaranth-isa amaranth-axi \
 	clash-smoke clash-flags clash-isa clash-axi \
-	bsc-smoke bsc-flags bsc-isa bsc-axi
+	bsc-smoke bsc-flags bsc-isa bsc-axi \
+	hazards
 
 axi: sv-axi bsv-axi amaranth-axi clash-axi bsc-axi
+hazards: sv-hazards bsv-hazards amaranth-hazards clash-hazards bsc-hazards
 
 lint: sv-lint bsv-lint amaranth-lint clash-lint bsc-lint
 
@@ -31,6 +35,9 @@ sv-isa:
 sv-axi:
 	$(MAKE) -C SystemVerilog axi
 
+sv-hazards:
+	$(MAKE) -C SystemVerilog hazards
+
 bsv-smoke:
 	$(MAKE) -C BSV smoke
 
@@ -42,6 +49,9 @@ bsv-isa:
 
 bsv-axi:
 	$(MAKE) -C BSV axi
+
+bsv-hazards:
+	$(MAKE) -C BSV hazards
 
 amaranth:
 	$(MAKE) -C Amaranth test
@@ -61,7 +71,10 @@ amaranth-isa:
 amaranth-axi:
 	$(MAKE) -C Amaranth axi
 
-clash: clash-smoke clash-flags clash-isa clash-axi
+amaranth-hazards:
+	$(MAKE) -C Amaranth hazards
+
+clash: clash-smoke clash-flags clash-isa clash-axi clash-hazards
 
 clash-install:
 	$(MAKE) -C Clash install-clash
@@ -81,7 +94,10 @@ clash-isa:
 clash-axi:
 	$(MAKE) -C Clash axi
 
-bsc: bsc-smoke bsc-flags bsc-isa bsc-axi
+clash-hazards:
+	$(MAKE) -C Clash hazards
+
+bsc: bsc-smoke bsc-flags bsc-isa bsc-axi bsc-hazards
 
 bsc-smoke:
 	$(MAKE) -C BSC smoke
@@ -94,6 +110,21 @@ bsc-isa:
 
 bsc-axi:
 	$(MAKE) -C BSC axi
+
+bsc-hazards:
+	$(MAKE) -C BSC hazards
+
+asm-tools:
+	$(MAKE) -C tools asm-tools
+
+asm-test:
+	$(MAKE) -C tools asm-test
+
+c-test:
+	$(MAKE) -C tools c-test
+
+toolchain-test:
+	$(MAKE) -C tools toolchain-test
 
 sv-lint:
 	$(MAKE) -C SystemVerilog lint
@@ -133,3 +164,4 @@ clean:
 	$(MAKE) -C Amaranth clean
 	$(MAKE) -C Clash clean
 	$(MAKE) -C BSC clean
+	$(MAKE) -C tools clean

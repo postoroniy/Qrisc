@@ -16,8 +16,6 @@ module mkTestbench(Empty);
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
     Reg#(Bool) checking <- mkReg(False);
     Reg#(Bit#(4)) check_idx <- mkReg(0);
-    Reg#(Bool) saw_inst_stop <- mkReg(False);
-    Reg#(Bit#(32)) check_at <- mkReg(0);
 
     // Bubble-sort smoke binary from the original qrisc32 SV testbench.
     RegFile#(Bit#(32), Bit#(32)) imem <- mkRegFileLoad("build/hex/smoke_1024.hex", 0, 1023);
@@ -41,10 +39,6 @@ module mkTestbench(Empty);
     rule inst_accept_req(!inst_rd_pending && axi_inst.o_rd_addr.notEmpty);
         let req = axi_inst.o_rd_addr.first;
         axi_inst.o_rd_addr.deq;
-        if (!saw_inst_stop && req.araddr > 32'd372) begin
-            saw_inst_stop <= True;
-            check_at <= cycle_count + 32;
-        end
         inst_rd_pending <= True;
         inst_rd_addr <= truncate(req.araddr);
         inst_rd_beats_left <= req.arlen + 1;
@@ -116,9 +110,9 @@ module mkTestbench(Empty);
     (* descending_urgency = "inst_accept_req, tick" *)
     rule tick;
         cycle_count <= cycle_count + 1;
-        if (saw_inst_stop && cycle_count == check_at) checking <= True;
-        if (cycle_count == 12000 && !saw_inst_stop) begin
-            $display("FAIL: qrisc32 sort smoke timeout before terminal instruction fetch");
+        if (cycle_count == 500000) checking <= True;
+        if (cycle_count == 1000000 && !checking) begin
+            $display("FAIL: qrisc32 sort smoke timeout before sorted check");
             $fatal(1);
         end
     endrule

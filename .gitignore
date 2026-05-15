@@ -1,4 +1,5 @@
 # Project build outputs
+build/
 .local/
 **/build/
 **/sim/
@@ -37,4 +38,3 @@ __pycache__/
 *.synctex.gz
 *.toc
 *.vrb
-

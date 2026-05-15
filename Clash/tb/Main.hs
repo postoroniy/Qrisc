@@ -30,5 +30,5 @@ main = do
 
 usage :: IO ()
 usage = do
-  putStrLn "usage: runghc -isrc tb/Main.hs smoke|flags|isa|axi"
+  putStrLn "usage: runghc -isrc tb/Main.hs smoke|flags|isa|axi|hazards"
   exitFailure

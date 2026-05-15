@@ -26,11 +26,15 @@ module Qrisc32ID(
         input logic[31:0]   instruction,
         input logic[31:0]   pc,
 
-        input logic         pipe_stall,//feed back from MEM stage
+        input logic         mem_stall,//feed back from MEM stage
+        input logic         branch_flush,
+        output logic        hazard_stall,
         input Qrisc_pack::pipe_struct_t   pipe_fwd_mem,//for memory read forwarding
         input Qrisc_pack::pipe_struct_t   pipe_fwd_ex,//for EX forwarding
         input Qrisc_pack::pipe_struct_t   pipe_wb_mem,//registered MEM writeback forwarding
         input Qrisc_pack::pipe_struct_t   pipe_wb_ex,//registered EX writeback forwarding
+        input logic         mem_load_pending,
+        input logic[4:0]    mem_load_dst,
         input logic[31:0]   rf_val_r1,
         input logic[31:0]   rf_val_r2,
         input logic[31:0]   rf_val_dst,
@@ -45,6 +49,17 @@ module Qrisc32ID(
     logic[31:0]       jmp_counter;
     logic[31:0]       alu_counter;
     logic[31:0]       oth_counter;
+    Qrisc_pack::opcode_t      opcode;
+    Qrisc_pack::load_mode_t   load_mode;
+    Qrisc_pack::jump_mode_t   jump_mode;
+    Qrisc_pack::flag_mode_t   flag_mode;
+    Qrisc_pack::alu_op_t      alu_op;
+    Qrisc_pack::incr_mode_t   incr_mode;
+    logic use_src_r1;
+    logic use_src_r2;
+    logic use_dst_r;
+    logic use_flags;
+    logic[3:0] bubble_counter;
 
     function automatic logic[31:0] forwarded_value(
         input logic[4:0] reg_idx,
@@ -68,8 +83,54 @@ module Qrisc32ID(
         end
     endfunction
 
+    function automatic logic pipe_writes_flags(input Qrisc_pack::pipe_struct_t p);
+        begin
+            pipe_writes_flags = p.and_op | p.or_op | p.xor_op | p.add_op |
+                                p.mul_op | p.shl_op | p.shr_op | p.cmp_op;
+        end
+    endfunction
+
+    function automatic logic reads_reg(
+        input logic[4:0] reg_idx,
+        input logic use1,
+        input logic[4:0] reg1,
+        input logic use2,
+        input logic[4:0] reg2,
+        input logic used,
+        input logic[4:0] regd
+    );
+        begin
+            reads_reg = (use1 && reg1 == reg_idx) ||
+                        (use2 && reg2 == reg_idx) ||
+                        (used && regd == reg_idx);
+        end
+    endfunction
+
+    function automatic logic pipe_reg_hazard(
+        input Qrisc_pack::pipe_struct_t p,
+        input logic use1,
+        input logic[4:0] reg1,
+        input logic use2,
+        input logic[4:0] reg2,
+        input logic used,
+        input logic[4:0] regd
+    );
+        begin
+            pipe_reg_hazard =
+                (p.write_reg && reads_reg(p.dst_r, use1, reg1, use2, reg2, used, regd)) ||
+                (p.incr_r2_enable && reads_reg(p.src_r2, use1, reg1, use2, reg2, used, regd));
+        end
+    endfunction
+
     //comb part
     always_comb begin
+        opcode    = Qrisc_pack::opcode_t'(instruction[31:28]);
+        load_mode = Qrisc_pack::load_mode_t'(instruction[27:26]);
+        jump_mode = Qrisc_pack::jump_mode_t'(instruction[27:26]);
+        flag_mode = Qrisc_pack::flag_mode_t'(instruction[27:26]);
+        alu_op    = Qrisc_pack::alu_op_t'(instruction[27:25]);
+        incr_mode = Qrisc_pack::incr_mode_t'(instruction[24:22]);
+
         pipe_id_out_w.dst_r     = instruction[04:00];
         pipe_id_out_w.src_r1    = instruction[09:05];
         pipe_id_out_w.src_r2    = instruction[14:10];
@@ -99,40 +160,50 @@ module Qrisc32ID(
         pipe_id_out_w.val_r1    = forwarded_value(pipe_id_out_w.src_r1, rf_val_r1);
         pipe_id_out_w.val_r2    = forwarded_value(pipe_id_out_w.src_r2, rf_val_r2);
         pipe_id_out_w.val_dst   = forwarded_value(pipe_id_out_w.dst_r,  rf_val_dst);
+        use_src_r1 = 1'b0;
+        use_src_r2 = 1'b0;
+        use_dst_r  = 1'b0;
+        use_flags  = 1'b0;
 
         offset_w = (instruction[25])?pipe_id_out_w.val_r2:{{17{instruction[24]}},instruction[24:10]};//17 bit sign + 15 bit offset
 
-        unique case(instruction[24:22])
-            0:begin pipe_id_out_w.incr_r2=4'd0;pipe_id_out_w.incr_r2_enable= 0;end
-            1:pipe_id_out_w.incr_r2=4'd1;
-            2:pipe_id_out_w.incr_r2=4'd2;
-            3:pipe_id_out_w.incr_r2=4'd4;
-            4:begin pipe_id_out_w.incr_r2=4'd0;pipe_id_out_w.incr_r2_enable= 0;end
-            5:pipe_id_out_w.incr_r2=-4'd1;
-            6:pipe_id_out_w.incr_r2=-4'd2;
-            7:pipe_id_out_w.incr_r2=-4'd4;
+        unique case(incr_mode)
+            Qrisc_pack::INCR_NONE:begin pipe_id_out_w.incr_r2=4'd0;pipe_id_out_w.incr_r2_enable= 0;end
+            Qrisc_pack::INCR_ONE:pipe_id_out_w.incr_r2=4'd1;
+            Qrisc_pack::INCR_TWO:pipe_id_out_w.incr_r2=4'd2;
+            Qrisc_pack::INCR_FOUR:pipe_id_out_w.incr_r2=4'd4;
+            Qrisc_pack::INCR_NONE_ALT:begin pipe_id_out_w.incr_r2=4'd0;pipe_id_out_w.incr_r2_enable= 0;end
+            Qrisc_pack::DECR_ONE:pipe_id_out_w.incr_r2=-4'd1;
+            Qrisc_pack::DECR_TWO:pipe_id_out_w.incr_r2=-4'd2;
+            Qrisc_pack::DECR_FOUR:pipe_id_out_w.incr_r2=-4'd4;
         endcase
 
-        case(instruction[31:28])
+        case(opcode)
             //load and store
             Qrisc_pack::LDR:
-            unique case(instruction[27:26])
-                2'b00: begin
+            unique case(load_mode)
+                Qrisc_pack::LOAD_REG: begin
+                        use_src_r1 = 1'b1;
+                        use_src_r2 = pipe_id_out_w.incr_r2_enable;
                         pipe_id_out_w.write_reg = (pipe_id_out_w.dst_r!=pipe_id_out_w.src_r1)?1:0;//write from reg src1 to reg dst
                         //pipe_id_out_w.incr_r2_enable    = pipe_id_out_w.write_reg;
                         pipe_id_out_w.val_dst = pipe_id_out_w.val_r1;
                     end
-                2'b01:begin
+                Qrisc_pack::LOAD_HIGH:begin
+                        use_dst_r = 1'b1;
                         pipe_id_out_w.val_dst[31:16]= instruction[20:5];
                         pipe_id_out_w.write_reg     = 1;//write from reg src1 to reg dst
                         pipe_id_out_w.incr_r2_enable= 0;
                     end
-                2'b10:begin
+                Qrisc_pack::LOAD_LOW:begin
+                        use_dst_r = 1'b1;
                         pipe_id_out_w.val_dst[15:0] = instruction[20:5];
                         pipe_id_out_w.write_reg     = 1;//write from reg src1 to reg dst
                         pipe_id_out_w.incr_r2_enable= 0;
                     end
-                2'b11:begin
+                Qrisc_pack::LOAD_MEM:begin
+                        use_src_r1 = 1'b1;
+                        use_src_r2 = instruction[25];
                         pipe_id_out_w.read_mem      = 1;//read from mem by Rscr2+Rsrc1 and then write to register
                         pipe_id_out_w.write_reg     = 1;//write from reg src1 to reg dst
                         pipe_id_out_w.incr_r2_enable= instruction[25];
@@ -144,6 +215,9 @@ module Qrisc32ID(
             case(instruction[27:26])
                 //2'b11:
                 default: begin
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = instruction[25];
+                    use_dst_r  = 1'b1;
                     pipe_id_out_w.write_mem     = 1;//write Rdst to mem by Rscr2+Rsrc1
                     pipe_id_out_w.val_r2        = offset_w;
                     pipe_id_out_w.incr_r2_enable= instruction[25];
@@ -152,22 +226,24 @@ module Qrisc32ID(
 
             //jumps
             Qrisc_pack::JMPUNC:
-            unique case(instruction[27:26])
-                2'b00: begin
+            unique case(jump_mode)
+                Qrisc_pack::JUMP_ABS: begin
                     pipe_id_out_w.val_r1        = {6'd0, instruction[25:0]};
                     pipe_id_out_w.val_r2        = '0;//no offset
                     pipe_id_out_w.incr_r2_enable= 0;
                     pipe_id_out_w.jmpunc        = 1;
                 end
-                2'b01: begin
+                Qrisc_pack::JUMP_REL: begin
                 //relative jump
+                    use_src_r2 = instruction[25];
                     pipe_id_out_w.val_r1        = pc;
                     pipe_id_out_w.val_r2        = offset_w;//offset
                     pipe_id_out_w.incr_r2_enable= instruction[25];
                     pipe_id_out_w.jmpunc        = 1;
                 end
-                2'b10:begin
+                Qrisc_pack::JUMP_CALL:begin
                     //call
+                    use_src_r2 = instruction[25];
                     pipe_id_out_w.val_r1        = pc;
                     pipe_id_out_w.val_r2        = offset_w;//offset
                     pipe_id_out_w.val_dst       = pc;//return address
@@ -175,8 +251,10 @@ module Qrisc32ID(
                     pipe_id_out_w.jmpunc        = 1;
                     pipe_id_out_w.write_reg     = 1;
                 end
-                2'b11:begin
+                Qrisc_pack::JUMP_RET:begin
                 //ret
+                    use_dst_r  = 1'b1;
+                    use_src_r2 = instruction[25];
                     pipe_id_out_w.val_r1        = pipe_id_out_w.val_dst;
                     pipe_id_out_w.val_r2        = '0;//offset
                     pipe_id_out_w.incr_r2_enable= instruction[25];
@@ -185,30 +263,38 @@ module Qrisc32ID(
             endcase
 
             Qrisc_pack::JMPF:
-            unique case(instruction[27:26])
-                2'b00:begin
+            unique case(flag_mode)
+                Qrisc_pack::FLAG_Z:begin
                 //jmpz
+                    use_flags                  = 1'b1;
+                    use_src_r2                 = instruction[25];
                     pipe_id_out_w.val_r1        = pc;
                     pipe_id_out_w.val_r2        = offset_w;//offset
                     pipe_id_out_w.incr_r2_enable= instruction[25];
                     pipe_id_out_w.jmpz          = 1;
                 end
-                2'b01:begin
+                Qrisc_pack::FLAG_NZ:begin
                 //jmpnz
+                    use_flags                  = 1'b1;
+                    use_src_r2                 = instruction[25];
                     pipe_id_out_w.val_r1        = pc;
                     pipe_id_out_w.val_r2        = offset_w;//offset
                     pipe_id_out_w.incr_r2_enable= instruction[25];
                     pipe_id_out_w.jmpnz         = 1;
                 end
-                2'b10:begin
+                Qrisc_pack::FLAG_C:begin
                 //jmpc
+                    use_flags                  = 1'b1;
+                    use_src_r2                 = instruction[25];
                     pipe_id_out_w.val_r1        = pc;
                     pipe_id_out_w.val_r2        = offset_w;//offset
                     pipe_id_out_w.incr_r2_enable= instruction[25];
                     pipe_id_out_w.jmpc          = 1;
                 end
-                2'b11:begin
+                Qrisc_pack::FLAG_NC:begin
                 //jmpnc
+                    use_flags                  = 1'b1;
+                    use_src_r2                 = instruction[25];
                     pipe_id_out_w.val_r1        = pc;
                     pipe_id_out_w.val_r2        = offset_w;//offset
                     pipe_id_out_w.incr_r2_enable= instruction[25];
@@ -218,63 +304,91 @@ module Qrisc32ID(
 
             //Arithmetic
             Qrisc_pack::ALU:
-            unique case(instruction[27:25])
-                3'd0: begin
+            unique case(alu_op)
+                Qrisc_pack::ALU_AND: begin
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
                     pipe_id_out_w.write_reg = 1;
                     pipe_id_out_w.and_op    = 1;
                 end
-                3'd1:begin
+                Qrisc_pack::ALU_OR:begin
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
                     pipe_id_out_w.write_reg = 1;
                     pipe_id_out_w.or_op     = 1;
                 end
-                3'd2:begin
+                Qrisc_pack::ALU_XOR:begin
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
                     pipe_id_out_w.write_reg = 1;
                     pipe_id_out_w.xor_op    = 1;
                 end
-                3'd3:begin
+                Qrisc_pack::ALU_ADD:begin
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
                     pipe_id_out_w.write_reg = 1;
                     pipe_id_out_w.add_op    = 1;
                 end
-                3'd4:begin
+                Qrisc_pack::ALU_MUL:begin
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
                     pipe_id_out_w.write_reg = 1;
                     pipe_id_out_w.mul_op    = 1;
                 end
-                3'd5:begin
+                Qrisc_pack::ALU_SHL:begin
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
                     pipe_id_out_w.write_reg = 1;
                     pipe_id_out_w.shl_op    = 1;
                 end
-                3'd6:begin
+                Qrisc_pack::ALU_SHR:begin
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
                     pipe_id_out_w.write_reg = 1;
                     pipe_id_out_w.shr_op    = 1;
                 end
-                3'd7:begin
+                Qrisc_pack::ALU_CMP:begin
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
                     //pipe_id_out_w.write_reg    = 0;
                     pipe_id_out_w.cmp_op    = 1;
                 end
             endcase
 
             Qrisc_pack::LDRF:
-            unique case(instruction[27:26])
-                2'b00:begin
+            unique case(flag_mode)
+                Qrisc_pack::FLAG_Z:begin
                 //ldrz
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
+                    use_flags  = 1'b1;
                     pipe_id_out_w.jmpz      = 1;
                     pipe_id_out_w.ldrf_op   = 1;
                     pipe_id_out_w.write_reg = 1;
                 end
-                2'b01:begin
+                Qrisc_pack::FLAG_NZ:begin
                 //ldrnz
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
+                    use_flags  = 1'b1;
                     pipe_id_out_w.jmpnz     = 1;
                     pipe_id_out_w.ldrf_op   = 1;
                     pipe_id_out_w.write_reg = 1;
                 end
-                2'b10:begin
+                Qrisc_pack::FLAG_C:begin
                 //ldrc
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
+                    use_flags  = 1'b1;
                     pipe_id_out_w.ldrf_op   = 1;
                     pipe_id_out_w.jmpc      = 1;
                     pipe_id_out_w.write_reg = 1;
                 end
-                2'b11:begin
+                Qrisc_pack::FLAG_NC:begin
                 //ldrnc
+                    use_src_r1 = 1'b1;
+                    use_src_r2 = 1'b1;
+                    use_flags  = 1'b1;
                     pipe_id_out_w.ldrf_op   = 1;
                     pipe_id_out_w.jmpnc     = 1;
                     pipe_id_out_w.write_reg = 1;
@@ -285,6 +399,8 @@ module Qrisc32ID(
                     pipe_id_out_w='0;
                 end
         endcase
+
+        hazard_stall = bubble_counter != 0;
     end
 
     always_ff@(posedge clk or posedge areset)
@@ -294,83 +410,95 @@ module Qrisc32ID(
         jmp_counter<='0;
         alu_counter<='0;
         oth_counter<='0;
+        bubble_counter<='0;
     end else begin
         if(instruction==0)
             nop_counter<=nop_counter+1;
-        else if(instruction[31:28]==Qrisc_pack::JMPUNC || instruction[31:28]==Qrisc_pack::JMPF)
+        else if(opcode==Qrisc_pack::JMPUNC || opcode==Qrisc_pack::JMPF)
             jmp_counter<=jmp_counter+1;
-        else if(instruction[31:28]==Qrisc_pack::ALU)
+        else if(opcode==Qrisc_pack::ALU)
             alu_counter<=alu_counter+1;
         else
             oth_counter<=oth_counter+1;
 
-        if(~pipe_stall)
+        if(mem_stall) begin
+            pipe_id_out <= pipe_id_out;
+        end else if(branch_flush || hazard_stall) begin
+            pipe_id_out <= '0;
+            if(branch_flush)
+                bubble_counter <= 4'd6;
+            else if(bubble_counter != 0)
+                bubble_counter <= bubble_counter - 1'b1;
+        end else begin
             pipe_id_out<=pipe_id_out_w;
+            if(instruction != '0)
+                bubble_counter <= 4'd6;
+        end
 
-//synthesys translate_off
+// synthesis translate_off
         if(verbose) begin
-            if(~pipe_stall) begin
-                case(instruction[31:28])
+            if(~mem_stall && ~hazard_stall && ~branch_flush) begin
+                case(opcode)
                     //load and store
                     Qrisc_pack::LDR:
-                    unique case(instruction[27:26])
-                        2'b00:$display("LDR R%0d, R%0d, R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        2'b01:$display("LDRH R%0d,0x%x",pipe_id_out_w.dst_r,instruction[20:5]);
-                        2'b10:$display("LDRL R%0d,0x%x",pipe_id_out_w.dst_r,instruction[20:5]);
-                        2'b11:$display("LDRP R%0d,[R%0d +%0d],R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,$signed(offset_w),pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                    unique case(load_mode)
+                        Qrisc_pack::LOAD_REG:$display("LDR R%0d, R%0d, R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                        Qrisc_pack::LOAD_HIGH:$display("LDRH R%0d,0x%x",pipe_id_out_w.dst_r,instruction[20:5]);
+                        Qrisc_pack::LOAD_LOW:$display("LDRL R%0d,0x%x",pipe_id_out_w.dst_r,instruction[20:5]);
+                        Qrisc_pack::LOAD_MEM:$display("LDRP R%0d,[R%0d +%0d],R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,$signed(offset_w),pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                     endcase
 
                     Qrisc_pack::STR:
-                    case(instruction[27:26])
+                    case(load_mode)
                         default:$display("STR R%0d,[R%0d +%0d],R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,$signed(offset_w),pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                     endcase
 
                     //jumps
                     Qrisc_pack::JMPUNC:
-                    unique case(instruction[27:26])
-                        2'b00:$display("JMP 0x%0x",instruction[25:0]);
-                        2'b01://relative jump
+                    unique case(jump_mode)
+                        Qrisc_pack::JUMP_ABS:$display("JMP 0x%0x",instruction[25:0]);
+                        Qrisc_pack::JUMP_REL://relative jump
                         $display("JMPR PC 0x%0x + offset %0d",pc,$signed(offset_w));
-                        2'b10://call
+                        Qrisc_pack::JUMP_CALL://call
                         $display("CALLR PC 0x%0x + offset %0d",pc,$signed(offset_w));
-                        2'b11://ret
+                        Qrisc_pack::JUMP_RET://ret
                         $display("RET to 0x%0x",pipe_id_out_w.val_dst);
                     endcase
 
                     Qrisc_pack::JMPF:
-                    unique case(instruction[27:26])
-                        2'b00://jmpz
+                    unique case(flag_mode)
+                        Qrisc_pack::FLAG_Z://jmpz
                             $display("JMPZ PC 0x%0x + offset %0d",pc,$signed(offset_w));
-                        2'b01://jmpnz
+                        Qrisc_pack::FLAG_NZ://jmpnz
                             $display("JMPNZ PC 0x%0x + offset %0d",pc,$signed(offset_w));
-                        2'b10://jmpc
+                        Qrisc_pack::FLAG_C://jmpc
                             $display("JMPC PC 0x%0x + offset %0d",pc,$signed(offset_w));
-                        2'b11://jmpnc
+                        Qrisc_pack::FLAG_NC://jmpnc
                             $display("JMPNC PC 0x%0x + offset %0d",pc,$signed(offset_w));
                     endcase
 
                     //Arithmetic
                     Qrisc_pack::ALU:
-                    unique case(instruction[27:25])
-                        3'd0:$display("AND R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        3'd1:$display("OR  R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        3'd2:$display("XOR R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        3'd3:$display("ADD R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        3'd4:$display("MUL R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        3'd5:$display("SHL R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        3'd6:$display("SHR R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        3'd7:$display("CMP R%0d with R%0d+%d",pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                    unique case(alu_op)
+                        Qrisc_pack::ALU_AND:$display("AND R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                        Qrisc_pack::ALU_OR:$display("OR  R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                        Qrisc_pack::ALU_XOR:$display("XOR R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                        Qrisc_pack::ALU_ADD:$display("ADD R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                        Qrisc_pack::ALU_MUL:$display("MUL R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                        Qrisc_pack::ALU_SHL:$display("SHL R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                        Qrisc_pack::ALU_SHR:$display("SHR R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
+                        Qrisc_pack::ALU_CMP:$display("CMP R%0d with R%0d+%d",pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                     endcase
 
                     Qrisc_pack::LDRF:
-                    unique case(instruction[27:26])
-                        2'b00://ldrz
+                    unique case(flag_mode)
+                        Qrisc_pack::FLAG_Z://ldrz
                             $display("LDRZ R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        2'b01://ldrnz
+                        Qrisc_pack::FLAG_NZ://ldrnz
                             $display("LDRNZ R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        2'b10://ldrc
+                        Qrisc_pack::FLAG_C://ldrc
                             $display("LDRC R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
-                        2'b11://ldrnc
+                        Qrisc_pack::FLAG_NC://ldrnc
                             $display("LDRNC R%0d,R%0d,R%0d+%d",pipe_id_out_w.dst_r,pipe_id_out_w.src_r1,pipe_id_out_w.src_r2,$signed(pipe_id_out_w.incr_r2));
                     endcase
 
@@ -380,10 +508,14 @@ module Qrisc32ID(
                             $display("Unknown Command %x",instruction[31:28]);
                         end
                 endcase
-            end else
+            end else if(mem_stall)
                 $display("[ID stage] STALLED!",instruction[31:28]);
+            else if(hazard_stall)
+                $display("[ID stage] HAZARD BUBBLE!",instruction[31:28]);
+            else
+                $display("[ID stage] BRANCH FLUSH!",instruction[31:28]);
         end
-//synthesys translate_on
+// synthesis translate_on
     end
 endmodule
 

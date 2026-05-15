@@ -23,13 +23,13 @@ LOCAL_CLASH_PROJECT := build/local-clash/cabal.project
 LOCAL_CLASH_ROOT := $(abspath $(CLASH_COMPILER_ROOT))
 LOCAL_CLASH_BINDIR := $(abspath $(CLASH_BIN_DIR))
 
-.PHONY: all smoke flags isa axi test verilog synth lint \
-	model model-smoke model-flags model-isa model-axi \
+.PHONY: all smoke flags isa axi hazards test verilog synth lint \
+	model model-smoke model-flags model-isa model-axi model-hazards \
 	install-clash clash-version clean FORCE
 .SECONDARY: $(BENCH_DIR)/%/.stamp
 .PRECIOUS: build/tb/%/.stamp
 
-all: smoke flags isa axi
+all: smoke flags isa axi hazards
 
 $(LOCAL_CLASH_PROJECT): FORCE
 	mkdir -p $(dir $@)
@@ -78,7 +78,7 @@ install-clash: $(LOCAL_CLASH_PROJECT)
 clash-version:
 	$(CLASH) --version
 
-$(HDL_STAMP): src/Qrisc32RTL.hs
+$(HDL_STAMP): src/Qrisc32RTL.hs src/Qrisc32ISA.hs
 	mkdir -p $(HDL_DIR)
 	$(CLASH) --verilog -package-db $(CLASH_PACKAGE_DB) -isrc -outputdir $(BUILD_DIR)/clash -fclash-hdldir $(HDL_DIR) -fclash-clear Qrisc32RTL
 	touch $(HDL_STAMP)
@@ -90,8 +90,8 @@ synth: $(HDL_STAMP) ys
 	yosys -s ys
 
 lint: $(HDL_STAMP) $(LINT_WAIVERS)
-	$(GHC) -XNoImplicitPrelude -Wall -fno-code -package-db $(CLASH_PACKAGE_DB) -isrc src/Qrisc32RTL.hs
-	$(GHC) -Wall -fno-code -isrc src/Qrisc32Model.hs tb/Main.hs
+	$(GHC) -XNoImplicitPrelude -Wall -fno-code -package-db $(CLASH_PACKAGE_DB) -isrc src/Qrisc32ISA.hs src/Qrisc32RTL.hs
+	$(GHC) -Wall -fno-code -isrc src/Qrisc32ISA.hs src/Qrisc32Model.hs tb/Main.hs
 	$(VERILATOR_ENV) verilator $(VERILATOR_LINT_FLAGS) $(LINT_WAIVERS) $(HDL_DIR)/Qrisc32RTL.topEntity/qrisc32.v --top-module qrisc32
 
 $(BENCH_DIR)/%/.stamp: tb/gen_vector_bench.py ../tests/vectors.json
@@ -125,9 +125,14 @@ axi: $(VERILATOR_DIR)/axi/.stamp
 	./$(VERILATOR_DIR)/axi/Vqrisc32_axi_tb
 	test -s $(VCD_DIR)/axi.vcd
 
+hazards: $(VERILATOR_DIR)/hazards/.stamp
+	rm -f $(VCD_DIR)/hazards.vcd
+	./$(VERILATOR_DIR)/hazards/Vqrisc32_hazards_tb
+	test -s $(VCD_DIR)/hazards.vcd
+
 test: all
 
-model: model-smoke model-flags model-isa model-axi
+model: model-smoke model-flags model-isa model-axi model-hazards
 
 model-smoke:
 	$(RUN_MODEL) smoke
@@ -140,6 +145,9 @@ model-isa:
 
 model-axi:
 	$(RUN_MODEL) axi
+
+model-hazards:
+	$(RUN_MODEL) hazards
 
 clean:
 	rm -rf build dist-newstyle

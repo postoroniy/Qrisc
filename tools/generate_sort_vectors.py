@@ -3,102 +3,56 @@
 
 from pathlib import Path
 
-
-LDR = 0
-STR = 1
-JMPUNC = 2
-JMPF = 3
-ALU = 4
-LDRF = 5
-
-OFFSET_CODE = 0
-INCR_0 = 0
-DECR_0 = 0
-
-AND = 0
-OR = 1
-XOR = 2
-ADD = 3
-MUL = 4
-SHL = 5
-SHR = 6
-CMP = 7
-
-JMP = 0
-JMPZ = 0
-JMPNZ = 1
-JMPC = 2
-JMPNC = 3
-
-LDRZ = 0
-LDRNZ = 1
-LDRC = 2
-LDRNC = 3
-
-R0 = 0
-R1 = 1
-R2 = 2
-R3 = 3
-R4 = 4
-R5 = 5
-R6 = 6
-R7 = 7
-R8 = 8
-R9 = 9
-R10 = 10
-R11 = 11
-R12 = 12
-R13 = 13
-R14 = 14
-R15 = 15
-R16 = 16
-R17 = 17
-R18 = 18
-R19 = 19
-R20 = 20
-R21 = 21
-R22 = 22
-R23 = 23
-
-
-def mask(value: int, bits: int) -> int:
-    return value & ((1 << bits) - 1)
-
-
-def ldrh(imm: int, dst: int) -> int:
-    return (LDR << 28) | (1 << 26) | (mask(imm, 16) << 5) | dst
-
-
-def ldrl(imm: int, dst: int) -> int:
-    return (LDR << 28) | (2 << 26) | (mask(imm, 16) << 5) | dst
-
-
-def ldrp(off15: int, base: int, dst: int) -> int:
-    return (LDR << 28) | (3 << 26) | (OFFSET_CODE << 25) | (mask(off15, 15) << 10) | (base << 5) | dst
-
-
-def ldrr(inc: int, src2: int, src1: int, dst: int) -> int:
-    return (LDR << 28) | (0 << 26) | (0 << 25) | (inc << 22) | (src2 << 10) | (src1 << 5) | dst
-
-
-def strp(off15: int, base: int, dst: int) -> int:
-    return (STR << 28) | (3 << 26) | (OFFSET_CODE << 25) | (mask(off15, 15) << 10) | (base << 5) | dst
-
-
-def alu(subop: int, inc: int, src2: int, src1: int, dst: int) -> int:
-    return (ALU << 28) | (subop << 25) | (inc << 22) | (src2 << 10) | (src1 << 5) | dst
-
-
-def ldrf(mode: int, inc: int, src2: int, src1: int, dst: int) -> int:
-    return (LDRF << 28) | (mode << 26) | (inc << 22) | (src2 << 10) | (src1 << 5) | dst
-
-
-def jmp_abs(addr: int) -> int:
-    return (JMPUNC << 28) | (JMP << 26) | mask(addr, 26)
-
-
-def jmp_flag(mode: int, off15: int) -> int:
-    return (JMPF << 28) | (mode << 26) | (OFFSET_CODE << 25) | (mask(off15, 15) << 10)
+from qrisc32.encoder import (
+    ADD,
+    CMP,
+    DECR_0,
+    INCR_0,
+    JMPC,
+    JMPNC,
+    JMPNZ,
+    JMPZ,
+    LDRC,
+    LDRNC,
+    LDRZ,
+    R0,
+    R1,
+    R2,
+    R3,
+    R4,
+    R5,
+    R6,
+    R7,
+    R8,
+    R9,
+    R10,
+    R11,
+    R12,
+    R13,
+    R14,
+    R15,
+    R16,
+    R17,
+    R18,
+    R19,
+    R20,
+    R21,
+    R22,
+    R23,
+    SHL,
+    SHR,
+    XOR,
+    alu,
+    jmp_abs,
+    jmp_flag,
+    ldrf,
+    ldrh,
+    ldrl,
+    ldrp,
+    ldrr,
+    strp,
+    write_hex,
+)
 
 
 def bubble_sort() -> list[int]:
@@ -328,18 +282,15 @@ def shell_sort_first() -> list[int]:
     return code
 
 
-def write_hex(path: Path, words: list[int]) -> None:
-    path.write_text("".join(f"{word & 0xFFFF_FFFF:08x}\n" for word in words))
-
-
 def main() -> int:
     repo = Path(__file__).resolve().parents[1]
     tests = repo / "tests"
     write_hex(tests / "smoke_bubble.hex", bubble_sort())
     write_hex(tests / "smoke_shell_mdf.hex", shell_sort_modified())
     write_hex(tests / "smoke_shell_first.hex", shell_sort_first())
-    write_hex(tests / "smoke.hex", bubble_sort())
-    write_hex(tests / "smoke_reversed.hex", list(range(10, 0, -1)))
+    # The public smoke vector is now generated from examples/c/bubble_sort.c by
+    # qrisc32-cc so it exercises compact, unscheduled binaries.  Keep these
+    # legacy algorithm images available without overwriting smoke.hex.
     return 0
 
 

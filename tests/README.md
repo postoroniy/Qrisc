@@ -75,14 +75,15 @@ smoke programs:
 Expected result: `dmem[0..27]` must equal:
 
 ```text
-0, 1, 0, 0, 0, 1, 0, 1,
-0, 0, 0, 1, 1, 0, 0, 1,
+0, 1, 0, 0, 1, 0, 0, 1,
+0, 0, 1, 0, 1, 0, 0, 1,
 0, 1, 1, 0, 0, 1, 1, 0,
 1, 0, 0, 1
 ```
 
-The conditional-jump section checks whether a branch skips a delayed store.
-Expected zero values in that section mean the corresponding branch was taken.
+The conditional-jump section checks the no-visible-delay-slot branch contract:
+taken branches squash younger side effects, and not-taken branches allow the
+fall-through store.
 
 Regression note: the SV reference leaves the observed `LDRC/LDRNC` carry result
 clear for the directed SHL and MUL cases in this vector.  The BSV EX stage is
@@ -94,3 +95,20 @@ Initial data-memory contents for the checked `isa.hex` result window.  BSV
 RegFile locations are otherwise unspecified in Bluesim, so the ISA testbench
 loads these zeros before checking branch-skipped stores against the SV
 reference.
+
+## hazards.hex
+
+Program: no-NOP directed dependency coverage for the hazard-aware pipeline
+contract.  The source assembly is kept in `hazards.s`.
+
+The vector checks adjacent ALU RAW dependencies, `LDRH/LDRL` use, load-use,
+ALU/load-to-store data, base-register address dependencies, CMP-to-LDRF,
+CMP-to-conditional-branch-not-taken, CMP-to-conditional-branch-taken squash,
+SRC2 auto-increment forwarding, and taken-branch squash through an
+unconditional jump.
+
+Expected result: `dmem[0..12]` must equal:
+
+```text
+19, 24, 24, 3, 31, 0, 42, 11, 100, 19, 5, 0, 77
+```

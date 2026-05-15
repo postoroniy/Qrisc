@@ -1,0 +1,43 @@
+package Qrisc_pack where
+
+data Opcode
+  = OpLdr | OpStr | OpJmpUnc | OpJmpF | OpAlu | OpLdrF
+  | OpReserved6 | OpReserved7 | OpReserved8 | OpReserved9
+  | OpReserved10 | OpReserved11 | OpReserved12 | OpReserved13
+  | OpReserved14 | OpReserved15
+  deriving (Bits, Eq)
+
+data LoadMode = LoadReg | LoadHigh | LoadLow | LoadMem
+  deriving (Bits, Eq)
+
+data JumpMode = JumpAbs | JumpRel | JumpCall | JumpRet
+  deriving (Bits, Eq)
+
+data FlagMode = FlagZ | FlagNZ | FlagC | FlagNC
+  deriving (Bits, Eq)
+
+data AluOp = AluAnd | AluOr | AluXor | AluAdd | AluMul | AluShl | AluShr | AluCmp
+  deriving (Bits, Eq)
+
+data IncrMode = IncrNone | IncrOne | IncrTwo | IncrFour | IncrNoneAlt | DecrOne | DecrTwo | DecrFour
+  deriving (Bits, Eq)
+
+incrValue :: IncrMode -> (Int 4, Bool)
+incrValue code =
+    case code of
+        IncrNone -> (0, False)
+        IncrOne -> (1, True)
+        IncrTwo -> (2, True)
+        IncrFour -> (4, True)
+        IncrNoneAlt -> (0, False)
+        DecrOne -> ((0 - 1), True)
+        DecrTwo -> ((0 - 2), True)
+        DecrFour -> ((0 - 4), True)
+
+flagCond :: FlagMode -> Bool -> Bool -> Bool
+flagCond mode z c =
+    case mode of
+        FlagZ -> z
+        FlagNZ -> not z
+        FlagC -> c
+        FlagNC -> not c

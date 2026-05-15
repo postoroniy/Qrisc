@@ -8,7 +8,7 @@ mkModelSmokeTest =
     module
         imem :: RegFile MemIdx Word32 <- mkRegFileLoad "build/hex/smoke_1024.hex" 0 1023
         dmem :: RegFile MemIdx Word32 <- mkRegFileLoad "build/hex/smoke_reversed_1024.hex" 0 1023
-        cpu :: Qrisc32ModelIfc <- mkQrisc32Model imem dmem 1023 1023 4096
+        cpu :: Qrisc32ModelIfc <- mkQrisc32Model imem dmem 1023 1023 100000
         checking :: Reg Bool <- mkReg False
         checkIdx :: Reg (Bit 4) <- mkReg 0
 

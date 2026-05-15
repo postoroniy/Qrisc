@@ -91,9 +91,7 @@ module qrisc32_axi_read_bridge(
     assign rready   = 1'b1;
 
     assign ar_fire      = arvalid && arready;
-    assign read_done    = (state == R_IDLE && ar_fire && rvalid) ||
-                          (state == R_ADDR && ar_fire && rvalid) ||
-                          (state == R_RESP && rvalid);
+    assign read_done    = (state == R_RESP && rvalid);
     assign mem.data_r   = rdata;
     assign mem.wait_req = mem.rd && !read_done;
 
@@ -104,7 +102,7 @@ module qrisc32_axi_read_bridge(
         end else begin
             unique case (state)
                 R_IDLE: begin
-                    if (mem.rd && !read_done) begin
+                    if (mem.rd) begin
                         addr_q <= mem.address_r;
                         state  <= ar_fire ? R_RESP : R_ADDR;
                     end
@@ -112,7 +110,7 @@ module qrisc32_axi_read_bridge(
 
                 R_ADDR: begin
                     if (ar_fire)
-                        state <= rvalid ? R_IDLE : R_RESP;
+                        state <= R_RESP;
                 end
 
                 R_RESP: begin
@@ -426,11 +424,22 @@ module qrisc32(
     logic[31:0]  instruction,pc;
     logic        new_address_valid_ex;
     logic[31:0]  new_address_ex;
+    logic        branch_flush_ex;
     logic[31:0]  rf_val_r1;
     logic[31:0]  rf_val_r2;
     logic[31:0]  rf_val_dst;
 
-    logic        pipe_stall;
+    logic        mem_stall;
+    logic        hazard_stall;
+    logic        mem_load_pending;
+    logic[4:0]   mem_load_dst;
+
+    always_ff @(posedge clk or posedge areset) begin
+        if(areset)
+            branch_flush_ex <= 1'b0;
+        else
+            branch_flush_ex <= new_address_valid_ex;
+    end
 
     Qrisc32RF qrisc32_RF(
         .clk(clk),
@@ -448,25 +457,31 @@ module qrisc32(
     Qrisc32IF qrisc32_IF(
         .clk(clk),
         .areset(areset),
-        .pipe_stall(pipe_stall),
+        .mem_stall(mem_stall),
+        .hazard_stall(hazard_stall),
         .instruction_mem(instruction_mem),
         .new_address_valid(new_address_valid_ex),
         .new_address(new_address_ex),
 
         .instruction(instruction),
-        .pc(pc)
+        .pc(pc),
+        .verbose(verbose)
     );
 
     Qrisc32ID qrisc32_ID(
         .clk(clk),
         .areset(areset),
-        .pipe_stall(pipe_stall),
+        .mem_stall(mem_stall),
+        .branch_flush(new_address_valid_ex),
+        .hazard_stall(hazard_stall),
         .instruction(instruction),
         .pc(pc),
         .pipe_fwd_mem(pipe_mem_out),//for memory read forwarding
         .pipe_fwd_ex(pipe_ex_out),//for R2 register and ALU forwarding
         .pipe_wb_mem(pipe_wb_mem),//registered MEM writeback forwarding
         .pipe_wb_ex(pipe_wb_ex),//registered EX writeback forwarding
+        .mem_load_pending(mem_load_pending),
+        .mem_load_dst(mem_load_dst),
         .rf_val_r1(rf_val_r1),
         .rf_val_r2(rf_val_r2),
         .rf_val_dst(rf_val_dst),
@@ -477,7 +492,8 @@ module qrisc32(
     Qrisc32EX qrisc32_EX(
         .clk(clk),
         .areset(areset),
-        .pipe_stall(pipe_stall),
+        .pipe_stall(mem_stall),
+        .branch_flush(branch_flush_ex),
         .pipe_ex_in(pipe_id_out),
         .pipe_ex_out(pipe_ex_out),
         .new_address_valid(new_address_valid_ex),
@@ -491,7 +507,9 @@ module qrisc32(
         .data_read_mem(data_read_mem),
         .data_write_mem(data_write_mem),
         .pipe_mem_out(pipe_mem_out),
-        .pipe_stall(pipe_stall),
+        .pipe_stall(mem_stall),
+        .load_pending(mem_load_pending),
+        .load_pending_dst(mem_load_dst),
         .verbose(verbose)
     );
 

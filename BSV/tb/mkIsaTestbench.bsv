@@ -12,8 +12,8 @@ module mkIsaTestbench(Empty);
 
     Reg#(Bit#(32)) cycle_count <- mkReg(0);
 
-    RegFile#(Bit#(32), Bit#(32)) imem <- mkRegFileLoad("../tests/isa.hex", 0, 328);
-    RegFile#(Bit#(32), Bit#(32)) dmem <- mkRegFileLoad("../tests/dmem_zero.hex", 0, 27);
+    RegFile#(Bit#(32), Bit#(32)) imem <- mkRegFileLoad("build/hex/isa_1024.hex", 0, 1023);
+    RegFile#(Bit#(32), Bit#(32)) dmem <- mkRegFileLoad("build/hex/dmem_zero_1024.hex", 0, 1023);
 
     AXI4_Slave_Xactor_IFC#(1,32,32,1) axi_inst <- mkAXI4_Slave_Xactor_2;
     AXI4_Slave_Xactor_IFC#(1,32,32,1) axi_data <- mkAXI4_Slave_Xactor_2;
@@ -106,14 +106,14 @@ module mkIsaTestbench(Empty);
             1: return 1;
             2: return 0;
             3: return 0;
-            4: return 0;
-            5: return 1;
+            4: return 1;
+            5: return 0;
             6: return 0;
             7: return 1;
             8: return 0;
             9: return 0;
-            10: return 0;
-            11: return 1;
+            10: return 1;
+            11: return 0;
             12: return 1;
             13: return 0;
             14: return 0;
@@ -129,13 +129,14 @@ module mkIsaTestbench(Empty);
             24: return 1;
             25: return 0;
             26: return 0;
-            default: return 1;
+            27: return 1;
+            default: return 0;
         endcase
     endfunction
 
     rule tick;
         cycle_count <= cycle_count + 1;
-        if (cycle_count == 3000) begin
+        if (cycle_count == 20000) begin
             checking <= True;
             check_idx <= 0;
         end

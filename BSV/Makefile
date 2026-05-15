@@ -56,9 +56,13 @@ VERILOG_OUTPUT = $(VDIR)/qrisc32.v
 
 SMOKE_HEX = $(HEXDIR)/smoke_1024.hex
 SMOKE_INIT_HEX = $(HEXDIR)/smoke_reversed_1024.hex
+FLAGS_HEX = $(HEXDIR)/flags_1024.hex
+ISA_HEX = $(HEXDIR)/isa_1024.hex
 AXI_HEX = $(HEXDIR)/axi_smoke_1024.hex
+HAZARDS_HEX = $(HEXDIR)/hazards_1024.hex
+DMEM_ZERO_HEX = $(HEXDIR)/dmem_zero_1024.hex
 
-all: smoke flags isa axi
+all: smoke flags isa axi hazards
 
 # Create required directories.
 $(BDIR) $(VDIR) $(IDIR) $(SDIR) $(SIMDIR) $(HEXDIR) $(VCD_DIR):
@@ -113,10 +117,10 @@ smoke: lib compile $(SMOKE_HEX) $(SMOKE_INIT_HEX) | $(SDIR) $(BDIR) $(IDIR) $(SI
 	status=$$?; \
 	cat "$$log"; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
-	grep -q 'PASS: qrisc32 sort smoke' "$$log"; \
+	grep -q 'PASS: qrisc32 sort smoke' "$$log" || exit 1; \
 	test -s "$$vcd"
 
-flags: lib compile | $(SDIR) $(BDIR) $(IDIR) $(SIMDIR) $(VCD_DIR)
+flags: lib compile $(FLAGS_HEX) | $(SDIR) $(BDIR) $(IDIR) $(SIMDIR) $(VCD_DIR)
 	$(BSC) -sim $(BSC_SIM_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -g mkFlagsTestbench $(TB_DIR)/mkFlagsTestbench.bsv
 	$(BSC) -sim -e mkFlagsTestbench -bdir $(BDIR) -simdir $(SIMDIR) -o $(SDIR)/mkFlagsTestbench
 	@log="$(BDIR)/mkFlagsTestbench.log"; \
@@ -126,10 +130,10 @@ flags: lib compile | $(SDIR) $(BDIR) $(IDIR) $(SIMDIR) $(VCD_DIR)
 	status=$$?; \
 	cat "$$log"; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
-	grep -q 'PASS: dmem\[0\]=5 dmem\[1\]=7' "$$log"; \
+	grep -q 'PASS: dmem\[0\]=5 dmem\[1\]=7' "$$log" || exit 1; \
 	test -s "$$vcd"
 
-isa: lib compile | $(SDIR) $(BDIR) $(IDIR) $(SIMDIR) $(VCD_DIR)
+isa: lib compile $(ISA_HEX) $(DMEM_ZERO_HEX) | $(SDIR) $(BDIR) $(IDIR) $(SIMDIR) $(VCD_DIR)
 	$(BSC) -sim $(BSC_SIM_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -g mkIsaTestbench $(TB_DIR)/mkIsaTestbench.bsv
 	$(BSC) -sim -e mkIsaTestbench -bdir $(BDIR) -simdir $(SIMDIR) -o $(SDIR)/mkIsaTestbench
 	@log="$(BDIR)/mkIsaTestbench.log"; \
@@ -139,7 +143,7 @@ isa: lib compile | $(SDIR) $(BDIR) $(IDIR) $(SIMDIR) $(VCD_DIR)
 	status=$$?; \
 	cat "$$log"; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
-	grep -q 'PASS: ISA parity vector' "$$log"; \
+	grep -q 'PASS: ISA parity vector' "$$log" || exit 1; \
 	test -s "$$vcd"
 
 axi: lib compile $(AXI_HEX) | $(SDIR) $(BDIR) $(IDIR) $(SIMDIR) $(VCD_DIR)
@@ -152,7 +156,20 @@ axi: lib compile $(AXI_HEX) | $(SDIR) $(BDIR) $(IDIR) $(SIMDIR) $(VCD_DIR)
 	status=$$?; \
 	cat "$$log"; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
-	grep -q 'PASS: AXI smoke dmem\[0\] = 12' "$$log"; \
+	grep -q 'PASS: AXI smoke dmem\[0\] = 12' "$$log" || exit 1; \
 	test -s "$$vcd"
 
-.PHONY: all clean compile lib synth lint smoke flags isa axi
+hazards: lib compile $(HAZARDS_HEX) $(DMEM_ZERO_HEX) | $(SDIR) $(BDIR) $(IDIR) $(SIMDIR) $(VCD_DIR)
+	$(BSC) -sim $(BSC_SIM_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -g mkHazardsTestbench $(TB_DIR)/mkHazardsTestbench.bsv
+	$(BSC) -sim -e mkHazardsTestbench -bdir $(BDIR) -simdir $(SIMDIR) -o $(SDIR)/mkHazardsTestbench
+	@log="$(BDIR)/mkHazardsTestbench.log"; \
+	vcd="$(VCD_DIR)/mkHazardsTestbench.vcd"; \
+	rm -f "$$vcd"; \
+	$(SDIR)/mkHazardsTestbench -V "$$vcd" > "$$log" 2>&1; \
+	status=$$?; \
+	cat "$$log"; \
+	if [ $$status -ne 0 ]; then exit $$status; fi; \
+	grep -q 'PASS: hazard interlock vector' "$$log" || exit 1; \
+	test -s "$$vcd"
+
+.PHONY: all clean compile lib synth lint smoke flags isa axi hazards

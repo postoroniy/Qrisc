@@ -9,6 +9,7 @@ import Data.Char (isSpace)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Numeric (readHex)
+import Qrisc32ISA
 
 data VectorSpec = VectorSpec
   { vectorName :: String
@@ -44,15 +45,8 @@ sext bits value =
       masked = value .&. ((1 `shiftL` bits) - 1)
   in u32 $ if masked .&. sign /= 0 then masked - (1 `shiftL` bits) else masked
 
-incrValue :: Int -> (Int, Bool)
-incrValue 0 = (0, False)
-incrValue 1 = (1, True)
-incrValue 2 = (2, True)
-incrValue 3 = (4, True)
-incrValue 4 = (0, False)
-incrValue 5 = (-1, True)
-incrValue 6 = (-2, True)
-incrValue _ = (-4, True)
+flagCond :: FlagMode -> Cpu -> Bool
+flagCond mode cpu = flagCondition mode (flagZ cpu) (flagC cpu)
 
 trim :: String -> String
 trim = f . f where f = reverse . dropWhile isSpace
@@ -76,15 +70,21 @@ vectorSpec "isa" =
   Just $ VectorSpec "isa" "../tests/isa.hex" (Just "../tests/dmem_zero.hex") (zip [0..] isaExpected) "PASS: ISA parity vector"
 vectorSpec "axi" =
   Just $ VectorSpec "axi" "../tests/axi_smoke.hex" Nothing [(0, 12)] "PASS: AXI smoke dmem[0] = 12"
+vectorSpec "hazards" =
+  Just $ VectorSpec "hazards" "../tests/hazards.hex" Nothing (zip [0..] hazardsExpected) "PASS: hazard interlock vector"
 vectorSpec _ = Nothing
 
 isaExpected :: [Int]
 isaExpected =
-  [ 0, 1, 0, 0, 0, 1, 0, 1
-  , 0, 0, 0, 1, 1, 0, 0, 1
+  [ 0, 1, 0, 0, 1, 0, 0, 1
+  , 0, 0, 1, 0, 1, 0, 0, 1
   , 0, 1, 1, 0, 0, 1, 1, 0
   , 1, 0, 0, 1
   ]
+
+hazardsExpected :: [Int]
+hazardsExpected =
+  [19, 24, 24, 3, 31, 0, 42, 11, 100, 19, 5, 0, 77]
 
 runVector :: VectorSpec -> IO (Map Int Int)
 runVector spec = do
@@ -97,7 +97,7 @@ runVector spec = do
         , flagZ = False
         , flagC = False
         }
-  pure $ dmem $ runCpu imem initial 4096 0 (-1)
+  pure $ dmem $ runCpu imem initial 100000 0 (-1)
 
 runCpu :: [Int] -> Cpu -> Int -> Int -> Int -> Cpu
 runCpu _ cpu 0 _ _ = cpu
@@ -114,15 +114,19 @@ step imem cpu =
   let idx = pc cpu `shiftR` 2
       inst = if idx >= 0 && idx < length imem then imem !! idx else 0
       currentPc = pc cpu
+      archPc = u32 (currentPc + 8)
       cpuBase = cpu { pc = u32 (pc cpu + 4) }
-      op = (inst `shiftR` 28) .&. 0xf
-      mode = (inst `shiftR` 26) .&. 0x3
+      op = opcodeOf ((inst `shiftR` 28) .&. 0xf)
+      loadMode = loadModeOf ((inst `shiftR` 26) .&. 0x3)
+      jumpMode = jumpModeOf ((inst `shiftR` 26) .&. 0x3)
+      flagMode = flagModeOf ((inst `shiftR` 26) .&. 0x3)
       dst = inst .&. 0x1f
       src1 = (inst `shiftR` 5) .&. 0x1f
       src2 = (inst `shiftR` 10) .&. 0x1f
       imm16 = (inst `shiftR` 5) .&. 0xffff
       off15 = (inst `shiftR` 10) .&. 0x7fff
-      (incr, incrEn0) = incrValue ((inst `shiftR` 22) .&. 0x7)
+      alu = aluOpOf ((inst `shiftR` 25) .&. 0x7)
+      (incr, incrEn0) = incrValue (incrModeOf ((inst `shiftR` 22) .&. 0x7))
       r1 = reg cpu src1
       r2 = reg cpu src2
       dstVal = reg cpu dst
@@ -132,75 +136,68 @@ step imem cpu =
         in maybe c1 (\target -> setReg target (incSource + incr) c1) incTarget
       defaultInc = if incrEn0 then Just src2 else Nothing
   in case op of
-      0x0 -> case mode of
-        0 -> writeFinal (dst /= src1) r1 defaultInc r2 cpuBase
-        1 -> writeFinal True (((dstVal .&. 0x0000ffff) .|. (imm16 `shiftL` 16))) Nothing r2 cpuBase
-        2 -> writeFinal True (((dstVal .&. 0xffff0000) .|. imm16)) Nothing r2 cpuBase
-        _ ->
+      OpLdr -> case loadMode of
+        LoadReg -> writeFinal (dst /= src1) r1 defaultInc r2 cpuBase
+        LoadHigh -> writeFinal True (((dstVal .&. 0x0000ffff) .|. (imm16 `shiftL` 16))) Nothing r2 cpuBase
+        LoadLow -> writeFinal True (((dstVal .&. 0xffff0000) .|. imm16)) Nothing r2 cpuBase
+        LoadMem ->
           let addr = u32 (r1 + offset)
               value = Map.findWithDefault 0 (addr `shiftR` 2) (dmem cpu)
               incTarget = if testBit inst 25 then Just src2 else Nothing
           in writeFinal True value incTarget r2 cpuBase
-      0x1 ->
+      OpStr ->
         let addr = u32 (r1 + offset)
             incTarget = if testBit inst 25 then Just src2 else Nothing
             c = cpuBase { dmem = Map.insert (addr `shiftR` 2) dstVal (dmem cpuBase) }
         in writeFinal False 0 incTarget r2 c
-      0x2 -> case mode of
-        0 -> writeFinal False 0 Nothing r2 cpuBase { pc = inst .&. 0x03ffffff }
-        1 ->
-          let c = cpuBase { pc = u32 (currentPc + offset) }
+      OpJmpUnc -> case jumpMode of
+        JumpAbs -> writeFinal False 0 Nothing r2 cpuBase { pc = inst .&. 0x03ffffff }
+        JumpRel ->
+          let c = cpuBase { pc = u32 (archPc + offset) }
               incTarget = if testBit inst 25 then Just src2 else Nothing
           in writeFinal False 0 incTarget r2 c
-        2 ->
-          let c = cpuBase { pc = u32 (currentPc + offset) }
+        JumpCall ->
+          let c = cpuBase { pc = u32 (archPc + offset) }
               incTarget = if testBit inst 25 then Just src2 else Nothing
-          in writeFinal True currentPc incTarget r2 c
-        _ -> writeFinal False 0 (if testBit inst 25 then Just src2 else Nothing) r2 cpuBase { pc = dstVal }
-      0x3 ->
-        let cond = case mode of
-              0 -> flagZ cpu
-              1 -> not (flagZ cpu)
-              2 -> flagC cpu
-              _ -> not (flagC cpu)
-            c = if cond then cpuBase { pc = u32 (currentPc + offset) } else cpuBase
+          in writeFinal True archPc incTarget r2 c
+        JumpRet -> writeFinal False 0 (if testBit inst 25 then Just src2 else Nothing) r2 cpuBase { pc = dstVal }
+      OpJmpF ->
+        let cond = flagCond flagMode cpu
+            c = if cond then cpuBase { pc = u32 (archPc + offset) } else cpuBase
             incTarget = if testBit inst 25 then Just src2 else Nothing
         in writeFinal False 0 incTarget r2 c
-      0x4 ->
-        let alu = (inst `shiftR` 25) .&. 0x7
-        in execAlu alu dst src2 incr defaultInc r1 r2 cpuBase
-      0x5 ->
-        let cond = case mode of
-              0 -> flagZ cpu
-              1 -> not (flagZ cpu)
-              2 -> flagC cpu
-              _ -> not (flagC cpu)
+      OpAlu ->
+        execAlu alu dst src2 incr defaultInc r1 r2 cpuBase
+      OpLdrF ->
+        let cond = flagCond flagMode cpu
             value = if cond then r1 else r2
         in writeFinal True value defaultInc r2 cpuBase
       _ -> cpuBase
 
-execAlu :: Int -> Int -> Int -> Int -> Maybe Int -> Int -> Int -> Cpu -> Cpu
+execAlu :: AluOp -> Int -> Int -> Int -> Maybe Int -> Int -> Int -> Cpu -> Cpu
 execAlu alu dst _src2 incr incTarget r1 r2 cpu =
   let write value c = setReg dst value c
       inc c = maybe c (\target -> setReg target (r2 + incr) c) incTarget
   in case alu of
-      0 -> inc $ write (r1 .&. r2) cpu { flagC = False, flagZ = (r1 .&. r2) == 0 }
-      1 -> inc $ write (r1 .|. r2) cpu { flagC = False, flagZ = (r1 .|. r2) == 0 }
-      2 -> inc $ write (xor r1 r2) cpu { flagC = False, flagZ = xor r1 r2 == 0 }
-      3 ->
+      AluAnd -> inc $ write (r1 .&. r2) cpu { flagC = False, flagZ = (r1 .&. r2) == 0 }
+      AluOr -> inc $ write (r1 .|. r2) cpu { flagC = False, flagZ = (r1 .|. r2) == 0 }
+      AluXor -> inc $ write (xor r1 r2) cpu { flagC = False, flagZ = xor r1 r2 == 0 }
+      AluAdd ->
         let result = r1 + r2
             value = u32 result
         in inc $ write value cpu { flagC = result > mask32, flagZ = value == 0 }
-      4 ->
-        let value = u32 (r1 * r2)
-        in inc $ write value cpu { flagC = False, flagZ = value == 0 }
-      5 ->
-        let value = u32 (r1 `shiftL` (r2 .&. 31))
-        in inc $ write value cpu { flagC = False, flagZ = value == 0 }
-      6 ->
+      AluMul ->
+        let product = r1 * r2
+            value = u32 product
+        in inc $ write value cpu { flagC = testBit product 32, flagZ = value == 0 }
+      AluShl ->
+        let shifted = r1 `shiftL` (r2 .&. 31)
+            value = u32 shifted
+        in inc $ write value cpu { flagC = testBit shifted 32, flagZ = value == 0 }
+      AluShr ->
         let shiftAmt = r2 .&. 31
             combined = (r1 `shiftL` 1) .&. 0x1ffffffff
             shr = combined `shiftR` shiftAmt
             value = (shr `shiftR` 1) .&. mask32
         in inc $ write value cpu { flagC = testBit shr 0, flagZ = value == 0 }
-      _ -> inc cpu { flagZ = r1 == r2, flagC = r1 < r2 }
+      AluCmp -> inc cpu { flagZ = r1 == r2, flagC = r1 < r2 }

@@ -67,24 +67,91 @@ typedef struct {
 
 typedef Maybe#(Pipe_s) MaybePipe_s;
 
-Bit#(4) op_ldr    = 4'd0;
-Bit#(4) op_str    = 4'd1;
-Bit#(4) op_jmpunc = 4'd2;
-Bit#(4) op_jmpf   = 4'd3;
-Bit#(4) op_alu    = 4'd4;
-Bit#(4) op_ldrf   = 4'd5;
+typedef enum {
+    OpLdr        = 4'd0,
+    OpStr        = 4'd1,
+    OpJmpUnc     = 4'd2,
+    OpJmpF       = 4'd3,
+    OpAlu        = 4'd4,
+    OpLdrF       = 4'd5,
+    OpReserved6  = 4'd6,
+    OpReserved7  = 4'd7,
+    OpReserved8  = 4'd8,
+    OpReserved9  = 4'd9,
+    OpReserved10 = 4'd10,
+    OpReserved11 = 4'd11,
+    OpReserved12 = 4'd12,
+    OpReserved13 = 4'd13,
+    OpReserved14 = 4'd14,
+    OpReserved15 = 4'd15
+} Opcode deriving (Bits, Eq, FShow);
 
-Bit#(1) offset_code = 1'b0;
-Bit#(1) offset_r    = 1'b1;
+typedef enum {
+    LoadReg  = 2'd0,
+    LoadHigh = 2'd1,
+    LoadLow  = 2'd2,
+    LoadMem  = 2'd3
+} LoadMode deriving (Bits, Eq, FShow);
 
-Bit#(3) incr_0 = 3'b000;
-Bit#(3) decr_0 = 3'b000;
-Bit#(3) incr_1 = 3'b001;
-Bit#(3) incr_2 = 3'b010;
-Bit#(3) incr_4 = 3'b011;
-Bit#(3) decr_1 = 3'b101;
-Bit#(3) decr_2 = 3'b110;
-Bit#(3) decr_4 = 3'b111;
+typedef enum {
+    JumpAbs  = 2'd0,
+    JumpRel  = 2'd1,
+    JumpCall = 2'd2,
+    JumpRet  = 2'd3
+} JumpMode deriving (Bits, Eq, FShow);
+
+typedef enum {
+    FlagZ  = 2'd0,
+    FlagNZ = 2'd1,
+    FlagC  = 2'd2,
+    FlagNC = 2'd3
+} FlagMode deriving (Bits, Eq, FShow);
+
+typedef enum {
+    AluAnd = 3'd0,
+    AluOr  = 3'd1,
+    AluXor = 3'd2,
+    AluAdd = 3'd3,
+    AluMul = 3'd4,
+    AluShl = 3'd5,
+    AluShr = 3'd6,
+    AluCmp = 3'd7
+} AluOp deriving (Bits, Eq, FShow);
+
+typedef enum {
+    OffsetCode = 1'b0,
+    OffsetReg  = 1'b1
+} OffsetMode deriving (Bits, Eq, FShow);
+
+typedef enum {
+    IncrNone    = 3'd0,
+    IncrOne     = 3'd1,
+    IncrTwo     = 3'd2,
+    IncrFour    = 3'd3,
+    IncrNoneAlt = 3'd4,
+    DecrOne     = 3'd5,
+    DecrTwo     = 3'd6,
+    DecrFour    = 3'd7
+} IncrMode deriving (Bits, Eq, FShow);
+
+Opcode op_ldr    = OpLdr;
+Opcode op_str    = OpStr;
+Opcode op_jmpunc = OpJmpUnc;
+Opcode op_jmpf   = OpJmpF;
+Opcode op_alu    = OpAlu;
+Opcode op_ldrf   = OpLdrF;
+
+OffsetMode offset_code = OffsetCode;
+OffsetMode offset_r    = OffsetReg;
+
+IncrMode incr_0 = IncrNone;
+IncrMode decr_0 = IncrNone;
+IncrMode incr_1 = IncrOne;
+IncrMode incr_2 = IncrTwo;
+IncrMode incr_4 = IncrFour;
+IncrMode decr_1 = DecrOne;
+IncrMode decr_2 = DecrTwo;
+IncrMode decr_4 = DecrFour;
 
 RegIdx r0  = 5'd0;
 RegIdx r1  = 5'd1;

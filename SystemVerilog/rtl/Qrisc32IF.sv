@@ -25,55 +25,75 @@ module Qrisc32IF(
     input logic       clk,areset,
     qrisc32_mem_port  instruction_mem,
 
-    input logic       pipe_stall,//feed back from MEM stage
+    input logic       mem_stall,//feed back from MEM stage
+    input logic       hazard_stall,
 
     input logic       new_address_valid,//feed back from  EX stage
     input logic[31:0] new_address,//feed back from  EX stage
 
     output logic[31:0]  instruction,
-    output logic[31:0]  pc
+    output logic[31:0]  pc,
+    input logic         verbose
     );
 
-    logic[2:0]  offset_w;//
-    logic[31:0] base_w;//
-    logic[31:0] jump_address_w;
-    logic       if_stall;
-    logic[31:0] stalled_adr0;
-    logic[31:0] offset_ext_w;
+    typedef enum logic {
+        IF_FETCH,
+        IF_HOLD
+    } if_state_t;
+
+    if_state_t state;
+    logic[31:0] fetch_pc;
+    logic[31:0] hold_pc;
+    logic       id_ready;
 
     always_comb begin
-        if_stall = instruction_mem.wait_req | pipe_stall;
-        pc       = instruction_mem.address_r;
-        base_w   = instruction_mem.address_r;
-        offset_w=4;
-        if(if_stall)
-            offset_w=0;
-        else if(new_address_valid) begin
-            base_w=new_address;
-            offset_w=0;
-        end
-        offset_ext_w   = {29'd0, offset_w};
-        jump_address_w = base_w + offset_ext_w;
+        id_ready = !mem_stall && !hazard_stall;
+        pc       = hold_pc + 32'd8;
     end
 
     always_ff@(posedge clk or posedge areset)
     if(areset) begin
-        instruction_mem.address_r<='0;//reset address!
-        instruction_mem.rd<=1;//forever =1
-        instruction<='0;//=ldr R0,R0 =nop
-        stalled_adr0<='0;
+        state <= IF_FETCH;
+        instruction_mem.address_r <= '0;
+        instruction_mem.rd <= 1'b0;
+        instruction <= '0;
+        fetch_pc <= '0;
+        hold_pc <= '0;
     end else begin
-        if(~if_stall) begin
-            instruction                 <= instruction_mem.data_r;
-            instruction_mem.address_r  <= jump_address_w;
-            stalled_adr0                <= jump_address_w;
+        if(new_address_valid) begin
+            state <= IF_FETCH;
+            instruction <= '0;
+            fetch_pc <= new_address;
+            hold_pc <= new_address;
+            instruction_mem.address_r <= new_address;
+            instruction_mem.rd <= 1'b1;
         end else begin
-            instruction_mem.address_r  <= stalled_adr0;
-            //instruction<='0;
-            //instruction<=instruction_mem.data_r;
-//synthesys translate_off
-            $display("[IF stage] Stalled->%s",(pipe_stall)?"Mem stage is stalled":"Fetching is stalled");
-//synthesys translate_on
+            unique case(state)
+                IF_FETCH: begin
+                    instruction_mem.address_r <= fetch_pc;
+                    instruction_mem.rd <= 1'b1;
+                    instruction <= '0;
+                    hold_pc <= fetch_pc;
+                    if(!instruction_mem.wait_req && instruction_mem.rd) begin
+                        instruction <= instruction_mem.data_r;
+                        fetch_pc <= fetch_pc + 32'd4;
+                        state <= IF_HOLD;
+                        instruction_mem.rd <= 1'b0;
+                    end
+                end
+
+                IF_HOLD: begin
+                    instruction_mem.rd <= 1'b0;
+                    if(id_ready) begin
+                        instruction <= '0;
+                        state <= IF_FETCH;
+                    end
+                end
+            endcase
+// synthesis translate_off
+            if(verbose && (mem_stall || hazard_stall || (state == IF_FETCH && instruction_mem.wait_req)))
+                $display("[IF stage] Stalled->%s",(mem_stall)?"Mem stage is stalled":((hazard_stall)?"Hazard is stalled":"Fetching is stalled"));
+// synthesis translate_on
         end
     end
 endmodule

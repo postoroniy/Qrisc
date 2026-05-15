@@ -3,10 +3,12 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Qrisc32RTL where
 
 import Clash.Prelude
+import Qrisc32ISA
 
 type U32 = BitVector 32
 type RegIdx = Index 32
@@ -101,6 +103,67 @@ data Pending
   | LoadPending RegIdx Bool RegIdx U32 U32
   | StorePending Bool RegIdx U32 U32
   deriving (Generic, NFDataX)
+
+newtype OpcodeBits = OpcodeBits (BitVector 4)
+newtype ModeBits = ModeBits (BitVector 2)
+newtype AluBits = AluBits (BitVector 3)
+newtype IncrBits = IncrBits (BitVector 3)
+
+instance OpcodeField OpcodeBits where
+  opcodeOf (OpcodeBits 0) = OpLdr
+  opcodeOf (OpcodeBits 1) = OpStr
+  opcodeOf (OpcodeBits 2) = OpJmpUnc
+  opcodeOf (OpcodeBits 3) = OpJmpF
+  opcodeOf (OpcodeBits 4) = OpAlu
+  opcodeOf (OpcodeBits 5) = OpLdrF
+  opcodeOf (OpcodeBits 6) = OpReserved6
+  opcodeOf (OpcodeBits 7) = OpReserved7
+  opcodeOf (OpcodeBits 8) = OpReserved8
+  opcodeOf (OpcodeBits 9) = OpReserved9
+  opcodeOf (OpcodeBits 10) = OpReserved10
+  opcodeOf (OpcodeBits 11) = OpReserved11
+  opcodeOf (OpcodeBits 12) = OpReserved12
+  opcodeOf (OpcodeBits 13) = OpReserved13
+  opcodeOf (OpcodeBits 14) = OpReserved14
+  opcodeOf _ = OpReserved15
+
+instance LoadModeField ModeBits where
+  loadModeOf (ModeBits 0) = LoadReg
+  loadModeOf (ModeBits 1) = LoadHigh
+  loadModeOf (ModeBits 2) = LoadLow
+  loadModeOf _ = LoadMem
+
+instance JumpModeField ModeBits where
+  jumpModeOf (ModeBits 0) = JumpAbs
+  jumpModeOf (ModeBits 1) = JumpRel
+  jumpModeOf (ModeBits 2) = JumpCall
+  jumpModeOf _ = JumpRet
+
+instance FlagModeField ModeBits where
+  flagModeOf (ModeBits 0) = FlagZMode
+  flagModeOf (ModeBits 1) = FlagNzMode
+  flagModeOf (ModeBits 2) = FlagCMode
+  flagModeOf _ = FlagNcMode
+
+instance AluOpField AluBits where
+  aluOpOf (AluBits 0) = AluAnd
+  aluOpOf (AluBits 1) = AluOr
+  aluOpOf (AluBits 2) = AluXor
+  aluOpOf (AluBits 3) = AluAdd
+  aluOpOf (AluBits 4) = AluMul
+  aluOpOf (AluBits 5) = AluShl
+  aluOpOf (AluBits 6) = AluShr
+  aluOpOf _ = AluCmp
+
+instance IncrModeField IncrBits where
+  incrModeOf (IncrBits 0) = IncrNone
+  incrModeOf (IncrBits 1) = IncrOne
+  incrModeOf (IncrBits 2) = IncrTwo
+  incrModeOf (IncrBits 3) = IncrFour
+  incrModeOf (IncrBits 4) = IncrNoneAlt
+  incrModeOf (IncrBits 5) = DecrOne
+  incrModeOf (IncrBits 6) = DecrTwo
+  incrModeOf _ = DecrFour
 
 data CpuState = CpuState
   { pc :: U32
@@ -219,28 +282,6 @@ regAt rs idx = rs !! idx
 writeReg :: RegIdx -> U32 -> Vec 32 U32 -> Vec 32 U32
 writeReg = replace
 
-incrWord :: BitVector 3 -> U32
-incrWord code =
-  case code of
-    1 -> 1
-    2 -> 2
-    3 -> 4
-    5 -> 0xffff_ffff
-    6 -> 0xffff_fffe
-    7 -> 0xffff_fffc
-    _ -> 0
-
-incrEnabled :: BitVector 3 -> Bool
-incrEnabled code =
-  case code of
-    1 -> True
-    2 -> True
-    3 -> True
-    5 -> True
-    6 -> True
-    7 -> True
-    _ -> False
-
 commitWriteThenInc :: RegIdx -> U32 -> Bool -> RegIdx -> U32 -> U32 -> Vec 32 U32 -> Vec 32 U32
 commitWriteThenInc dst value incEn incReg incBase incDelta rs =
   let rs1 = writeReg dst value rs
@@ -259,42 +300,6 @@ sext15 x =
 low26 :: U32 -> U32
 low26 inst = zeroExtend (slice d25 d0 inst :: BitVector 26)
 
-shiftLeft32 :: U32 -> U32 -> U32
-shiftLeft32 x amount =
-  case (slice d4 d0 amount :: BitVector 5) of
-    0 -> x
-    1 -> x `shiftL` (1 :: Int)
-    2 -> x `shiftL` (2 :: Int)
-    3 -> x `shiftL` (3 :: Int)
-    4 -> x `shiftL` (4 :: Int)
-    5 -> x `shiftL` (5 :: Int)
-    6 -> x `shiftL` (6 :: Int)
-    7 -> x `shiftL` (7 :: Int)
-    8 -> x `shiftL` (8 :: Int)
-    9 -> x `shiftL` (9 :: Int)
-    10 -> x `shiftL` (10 :: Int)
-    11 -> x `shiftL` (11 :: Int)
-    12 -> x `shiftL` (12 :: Int)
-    13 -> x `shiftL` (13 :: Int)
-    14 -> x `shiftL` (14 :: Int)
-    15 -> x `shiftL` (15 :: Int)
-    16 -> x `shiftL` (16 :: Int)
-    17 -> x `shiftL` (17 :: Int)
-    18 -> x `shiftL` (18 :: Int)
-    19 -> x `shiftL` (19 :: Int)
-    20 -> x `shiftL` (20 :: Int)
-    21 -> x `shiftL` (21 :: Int)
-    22 -> x `shiftL` (22 :: Int)
-    23 -> x `shiftL` (23 :: Int)
-    24 -> x `shiftL` (24 :: Int)
-    25 -> x `shiftL` (25 :: Int)
-    26 -> x `shiftL` (26 :: Int)
-    27 -> x `shiftL` (27 :: Int)
-    28 -> x `shiftL` (28 :: Int)
-    29 -> x `shiftL` (29 :: Int)
-    30 -> x `shiftL` (30 :: Int)
-    _ -> x `shiftL` (31 :: Int)
-
 aluShrBy :: U32 -> Int -> (U32, Bool)
 aluShrBy a amount =
   let value = a `shiftR` amount
@@ -305,6 +310,52 @@ aluAdd :: U32 -> U32 -> (U32, Bool)
 aluAdd a b =
   let wide = (zeroExtend a :: BitVector 33) + (zeroExtend b :: BitVector 33)
   in (truncateB wide, msb wide == 1)
+
+aluMul :: U32 -> U32 -> (U32, Bool)
+aluMul a b =
+  let wide = (zeroExtend a :: BitVector 64) * (zeroExtend b :: BitVector 64)
+  in (truncateB wide, wide ! (32 :: Int) == 1)
+
+aluShlBy :: U32 -> Int -> (U32, Bool)
+aluShlBy a amount =
+  let wide = (zeroExtend a :: BitVector 33) `shiftL` amount
+  in (truncateB wide, msb wide == 1)
+
+aluShl :: U32 -> U32 -> (U32, Bool)
+aluShl a b =
+  case (slice d4 d0 b :: BitVector 5) of
+    0 -> aluShlBy a 0
+    1 -> aluShlBy a 1
+    2 -> aluShlBy a 2
+    3 -> aluShlBy a 3
+    4 -> aluShlBy a 4
+    5 -> aluShlBy a 5
+    6 -> aluShlBy a 6
+    7 -> aluShlBy a 7
+    8 -> aluShlBy a 8
+    9 -> aluShlBy a 9
+    10 -> aluShlBy a 10
+    11 -> aluShlBy a 11
+    12 -> aluShlBy a 12
+    13 -> aluShlBy a 13
+    14 -> aluShlBy a 14
+    15 -> aluShlBy a 15
+    16 -> aluShlBy a 16
+    17 -> aluShlBy a 17
+    18 -> aluShlBy a 18
+    19 -> aluShlBy a 19
+    20 -> aluShlBy a 20
+    21 -> aluShlBy a 21
+    22 -> aluShlBy a 22
+    23 -> aluShlBy a 23
+    24 -> aluShlBy a 24
+    25 -> aluShlBy a 25
+    26 -> aluShlBy a 26
+    27 -> aluShlBy a 27
+    28 -> aluShlBy a 28
+    29 -> aluShlBy a 29
+    30 -> aluShlBy a 30
+    _ -> aluShlBy a 31
 
 aluShr :: U32 -> U32 -> (U32, Bool)
 aluShr a b =
@@ -390,9 +441,12 @@ commitWb s@CpuState{..} =
 
 decodeExecute :: CpuState -> U32 -> CpuState
 decodeExecute s@CpuState{..} inst =
-  let op = slice d31 d28 inst :: BitVector 4
-      mode = slice d27 d26 inst :: BitVector 2
-      alu = slice d27 d25 inst :: BitVector 3
+  let modeBits = ModeBits (slice d27 d26 inst :: BitVector 2)
+      op = opcodeOf (OpcodeBits (slice d31 d28 inst :: BitVector 4))
+      loadMode = loadModeOf modeBits
+      jumpMode = jumpModeOf modeBits
+      flagMode = flagModeOf modeBits
+      alu = aluOpOf (AluBits (slice d27 d25 inst :: BitVector 3))
       dst = dstIdx inst
       src1 = src1Idx inst
       src2 = src2Idx inst
@@ -402,17 +456,17 @@ decodeExecute s@CpuState{..} inst =
       imm16 = slice d20 d5 inst :: BitVector 16
       off15 = slice d24 d10 inst :: BitVector 15
       useRegOffset = inst ! (25 :: Int) == 1
-      incCode = slice d24 d22 inst :: BitVector 3
-      incDelta = incrWord incCode
-      defaultIncEn = incrEnabled incCode
+      incCode = incrModeOf (IncrBits (slice d24 d22 inst :: BitVector 3))
+      (incDelta, defaultIncEn) = incrValue incCode :: (U32, Bool)
       offset = if useRegOffset then r2 else sext15 off15
       seqPc = pc + 4
+      archPc = pc + 8
       writeMaybe doWrite value incEn =
         queueWb s seqPc doWrite dst value incEn src2 r2 incDelta False False False
       jumpState target incEn writeRet =
-        queueWb s target writeRet dst pc incEn src2 r2 incDelta False False False
+        queueWb s target writeRet dst archPc incEn src2 r2 incDelta False False False
       branch cond =
-        let target = pc + offset
+        let target = archPc + offset
         in queueWb s (if cond then target else seqPc) False dst 0 useRegOffset src2 r2 incDelta False False False
       ldrf cond =
         let value = if cond then r1 else r2
@@ -433,60 +487,52 @@ decodeExecute s@CpuState{..} inst =
       aluResult value carry =
         queueWb s seqPc True dst value defaultIncEn src2 r2 incDelta True (value == 0) carry
   in case op of
-      0x0 ->
-        case mode of
-          0 -> writeMaybe (dst /= src1) r1 defaultIncEn
-          1 ->
+      OpLdr ->
+        case loadMode of
+          LoadReg -> writeMaybe (dst /= src1) r1 defaultIncEn
+          LoadHigh ->
             let value = (dstVal .&. 0x0000_ffff) .|. (zeroExtend imm16 `shiftL` 16)
             in writeMaybe True value False
-          2 ->
+          LoadLow ->
             let value = (dstVal .&. 0xffff_0000) .|. zeroExtend imm16
             in writeMaybe True value False
-          _ -> memRead
-      0x1 -> memWrite
-      0x2 ->
-        case mode of
-          0 -> jumpState (low26 inst) False False
-          1 -> jumpState (pc + offset) useRegOffset False
-          2 -> jumpState (pc + offset) useRegOffset True
-          _ -> jumpState dstVal useRegOffset False
-      0x3 ->
-        case mode of
-          0 -> branch flagZ
-          1 -> branch (not flagZ)
-          2 -> branch flagC
-          _ -> branch (not flagC)
-      0x4 ->
+          LoadMem -> memRead
+      OpStr -> memWrite
+      OpJmpUnc ->
+        case jumpMode of
+          JumpAbs -> jumpState (low26 inst) False False
+          JumpRel -> jumpState (archPc + offset) useRegOffset False
+          JumpCall -> jumpState (archPc + offset) useRegOffset True
+          JumpRet -> jumpState dstVal useRegOffset False
+      OpJmpF ->
+        branch (flagCondition flagMode flagZ flagC)
+      OpAlu ->
         case alu of
-          0 ->
+          AluAnd ->
             let value = r1 .&. r2
             in aluResult value False
-          1 ->
+          AluOr ->
             let value = r1 .|. r2
             in aluResult value False
-          2 ->
+          AluXor ->
             let value = r1 `xor` r2
             in aluResult value False
-          3 ->
+          AluAdd ->
             let (value, carry) = aluAdd r1 r2
             in aluResult value carry
-          4 ->
-            let value = r1 * r2
-            in aluResult value False
-          5 ->
-            let value = shiftLeft32 r1 r2
-            in aluResult value False
-          6 ->
+          AluMul ->
+            let (value, carry) = aluMul r1 r2
+            in aluResult value carry
+          AluShl ->
+            let (value, carry) = aluShl r1 r2
+            in aluResult value carry
+          AluShr ->
             let (value, carry) = aluShr r1 r2
             in aluResult value carry
-          _ ->
+          AluCmp ->
             queueWb s seqPc False dst 0 defaultIncEn src2 r2 incDelta True (r1 == r2) (r1 < r2)
-      0x5 ->
-        case mode of
-          0 -> ldrf flagZ
-          1 -> ldrf (not flagZ)
-          2 -> ldrf flagC
-          _ -> ldrf (not flagC)
+      OpLdrF ->
+        ldrf (flagCondition flagMode flagZ flagC)
       _ -> queueWb s seqPc False dst 0 defaultIncEn src2 r2 incDelta False False False
 
 commitLoad :: CpuState -> U32 -> CpuState

@@ -6,7 +6,7 @@ from Qrisc32Model.model import load_manifest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VECTOR_ORDER = ("smoke", "flags", "isa", "axi")
+VECTOR_ORDER = ("smoke", "flags", "isa", "axi", "hazards")
 VECTOR_CHOICES = ("all",) + VECTOR_ORDER
 
 

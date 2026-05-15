@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from amaranth import Array, Cat, ClockDomain, ClockSignal, Const, Elaboratable, Module, Mux, Signal
 
+from .isa import AluOp, FlagMode, IncrMode, JumpMode, LoadMode, Opcode
+
 
 PIPE_FIELDS = (
     ("val_r1", 32),
@@ -211,6 +213,7 @@ class Qrisc32(Elaboratable):
         rf = Array(Signal(32, name=f"rf_{i}") for i in range(32))
         imem_addr = Signal(32, name="if_instruction_address")
         imem_data = Signal(32, name="if_instruction_data")
+        imem_rd = Signal(name="if_instruction_read")
         imem_wait = Signal(name="if_instruction_wait")
         instruction = Signal(32, name="if_instruction")
         stalled_adr0 = Signal(32, name="if_stalled_adr0")
@@ -290,7 +293,7 @@ class Qrisc32(Elaboratable):
         read_bridge(
             "instruction",
             imem_addr,
-            Const(1, 1),
+            imem_rd,
             imem_data,
             imem_wait,
             self.axi_instruction_arid,
@@ -309,7 +312,7 @@ class Qrisc32(Elaboratable):
             self.axi_instruction_rdata,
             self.axi_instruction_rvalid,
             self.axi_instruction_rready,
-            True,
+            False,
         )
 
         read_bridge(
@@ -334,7 +337,7 @@ class Qrisc32(Elaboratable):
             self.axi_data_rdata,
             self.axi_data_rvalid,
             self.axi_data_rready,
-            True,
+            False,
         )
 
         w_idle = Const(0, 2)
@@ -411,25 +414,18 @@ class Qrisc32(Elaboratable):
                 with m.Default():
                     m.d.sync += w_state.eq(w_idle)
 
-        pc_if = imem_addr
+        if_fetch = Const(0, 1)
+        if_hold = Const(1, 1)
+        if_state = Signal(1, name="if_state")
+        if_fetch_pc = Signal(32, name="if_fetch_pc")
+        if_hold_pc = Signal(32, name="if_hold_pc")
+        bubble_counter = Signal(4, name="id_bubble_counter")
+        hazard_stall = Signal(name="id_hazard_stall")
+        pc_if = if_hold_pc + 8
         new_address_valid = Signal(name="ex_new_address_valid")
         new_address = Signal(32, name="ex_new_address")
         pipe_stall = Signal(name="pipe_stall")
-        if_stall = Signal(name="if_stall")
-        if_base = Signal(32, name="if_base")
-        if_offset = Signal(32, name="if_offset")
-        if_next_addr = Signal(32, name="if_next_addr")
-
-        m.d.comb += [
-            if_stall.eq(imem_wait | pipe_stall),
-            if_base.eq(imem_addr),
-            if_offset.eq(4),
-        ]
-        with m.If(if_stall):
-            m.d.comb += if_offset.eq(0)
-        with m.Elif(new_address_valid):
-            m.d.comb += [if_base.eq(new_address), if_offset.eq(0)]
-        m.d.comb += if_next_addr.eq(if_base + if_offset)
+        m.d.comb += hazard_stall.eq(bubble_counter != 0)
 
         inst = instruction
         dst = inst[0:5]
@@ -443,6 +439,12 @@ class Qrisc32(Elaboratable):
         id_val_dst = Signal(32, name="id_val_dst")
         incr = Signal(4, name="id_incr")
         incr_enable = Signal(name="id_incr_enable")
+        opcode = Signal(Opcode, name="id_opcode")
+        load_mode = Signal(LoadMode, name="id_load_mode")
+        jump_mode = Signal(JumpMode, name="id_jump_mode")
+        flag_mode = Signal(FlagMode, name="id_flag_mode")
+        alu_op = Signal(AluOp, name="id_alu_op")
+        incr_mode = Signal(IncrMode, name="id_incr_mode")
 
         def forwarded_value(reg_idx, name):
             value = Signal(32, name=name)
@@ -467,6 +469,12 @@ class Qrisc32(Elaboratable):
             id_val_r2.eq(forwarded_value(src2, "id_forward_r2")),
             id_val_dst.eq(forwarded_value(dst, "id_forward_dst")),
             offset_w.eq(Mux(inst[25], id_val_r2, Cat(off15, off15[14].replicate(17)))),
+            opcode.eq(inst[28:32]),
+            load_mode.eq(inst[26:28]),
+            jump_mode.eq(inst[26:28]),
+            flag_mode.eq(inst[26:28]),
+            alu_op.eq(inst[25:28]),
+            incr_mode.eq(inst[22:25]),
             incr.eq(0),
             incr_enable.eq(0),
             pipe_id_w["dst_r"].eq(dst),
@@ -477,18 +485,18 @@ class Qrisc32(Elaboratable):
             pipe_id_w["val_dst"].eq(id_val_dst),
         ]
 
-        with m.Switch(inst[22:25]):
-            with m.Case(1):
+        with m.Switch(incr_mode):
+            with m.Case(IncrMode.ONE):
                 m.d.comb += [incr.eq(1), incr_enable.eq(1)]
-            with m.Case(2):
+            with m.Case(IncrMode.TWO):
                 m.d.comb += [incr.eq(2), incr_enable.eq(1)]
-            with m.Case(3):
+            with m.Case(IncrMode.FOUR):
                 m.d.comb += [incr.eq(4), incr_enable.eq(1)]
-            with m.Case(5):
+            with m.Case(IncrMode.NEG_ONE):
                 m.d.comb += [incr.eq(Const(-1, 4)), incr_enable.eq(1)]
-            with m.Case(6):
+            with m.Case(IncrMode.NEG_TWO):
                 m.d.comb += [incr.eq(Const(-2, 4)), incr_enable.eq(1)]
-            with m.Case(7):
+            with m.Case(IncrMode.NEG_FOUR):
                 m.d.comb += [incr.eq(Const(-4, 4)), incr_enable.eq(1)]
 
         m.d.comb += [
@@ -496,21 +504,21 @@ class Qrisc32(Elaboratable):
             pipe_id_w["incr_r2_enable"].eq(incr_enable),
         ]
 
-        with m.Switch(inst[28:32]):
-            with m.Case(0):
-                with m.Switch(inst[26:28]):
-                    with m.Case(0):
+        with m.Switch(opcode):
+            with m.Case(Opcode.LDR):
+                with m.Switch(load_mode):
+                    with m.Case(LoadMode.REG):
                         m.d.comb += [
                             pipe_id_w["write_reg"].eq(dst != src1),
                             pipe_id_w["val_dst"].eq(id_val_r1),
                         ]
-                    with m.Case(1):
+                    with m.Case(LoadMode.HIGH):
                         m.d.comb += [
                             pipe_id_w["val_dst"].eq(Cat(id_val_dst[0:16], imm16)),
                             pipe_id_w["write_reg"].eq(1),
                             pipe_id_w["incr_r2_enable"].eq(0),
                         ]
-                    with m.Case(2):
+                    with m.Case(LoadMode.LOW):
                         m.d.comb += [
                             pipe_id_w["val_dst"].eq(Cat(imm16, id_val_dst[16:32])),
                             pipe_id_w["write_reg"].eq(1),
@@ -523,29 +531,29 @@ class Qrisc32(Elaboratable):
                             pipe_id_w["incr_r2_enable"].eq(inst[25]),
                             pipe_id_w["val_r2"].eq(offset_w),
                         ]
-            with m.Case(1):
+            with m.Case(Opcode.STR):
                 m.d.comb += [
                     pipe_id_w["write_mem"].eq(1),
                     pipe_id_w["val_r2"].eq(offset_w),
                     pipe_id_w["incr_r2_enable"].eq(inst[25]),
                 ]
-            with m.Case(2):
-                with m.Switch(inst[26:28]):
-                    with m.Case(0):
+            with m.Case(Opcode.JMPUNC):
+                with m.Switch(jump_mode):
+                    with m.Case(JumpMode.ABS):
                         m.d.comb += [
                             pipe_id_w["val_r1"].eq(inst[0:26]),
                             pipe_id_w["val_r2"].eq(0),
                             pipe_id_w["incr_r2_enable"].eq(0),
                             pipe_id_w["jmpunc"].eq(1),
                         ]
-                    with m.Case(1):
+                    with m.Case(JumpMode.REL):
                         m.d.comb += [
                             pipe_id_w["val_r1"].eq(pc_if),
                             pipe_id_w["val_r2"].eq(offset_w),
                             pipe_id_w["incr_r2_enable"].eq(inst[25]),
                             pipe_id_w["jmpunc"].eq(1),
                         ]
-                    with m.Case(2):
+                    with m.Case(JumpMode.CALL):
                         m.d.comb += [
                             pipe_id_w["val_r1"].eq(pc_if),
                             pipe_id_w["val_r2"].eq(offset_w),
@@ -561,48 +569,48 @@ class Qrisc32(Elaboratable):
                             pipe_id_w["incr_r2_enable"].eq(inst[25]),
                             pipe_id_w["jmpunc"].eq(1),
                         ]
-            with m.Case(3):
+            with m.Case(Opcode.JMPF):
                 m.d.comb += [
                     pipe_id_w["val_r1"].eq(pc_if),
                     pipe_id_w["val_r2"].eq(offset_w),
                     pipe_id_w["incr_r2_enable"].eq(inst[25]),
                 ]
-                with m.Switch(inst[26:28]):
-                    with m.Case(0):
+                with m.Switch(flag_mode):
+                    with m.Case(FlagMode.Z):
                         m.d.comb += pipe_id_w["jmpz"].eq(1)
-                    with m.Case(1):
+                    with m.Case(FlagMode.NZ):
                         m.d.comb += pipe_id_w["jmpnz"].eq(1)
-                    with m.Case(2):
+                    with m.Case(FlagMode.C):
                         m.d.comb += pipe_id_w["jmpc"].eq(1)
                     with m.Default():
                         m.d.comb += pipe_id_w["jmpnc"].eq(1)
-            with m.Case(4):
-                m.d.comb += pipe_id_w["write_reg"].eq(inst[25:28] != 7)
-                with m.Switch(inst[25:28]):
-                    with m.Case(0):
+            with m.Case(Opcode.ALU):
+                m.d.comb += pipe_id_w["write_reg"].eq(alu_op != AluOp.CMP)
+                with m.Switch(alu_op):
+                    with m.Case(AluOp.AND):
                         m.d.comb += pipe_id_w["and_op"].eq(1)
-                    with m.Case(1):
+                    with m.Case(AluOp.OR):
                         m.d.comb += pipe_id_w["or_op"].eq(1)
-                    with m.Case(2):
+                    with m.Case(AluOp.XOR):
                         m.d.comb += pipe_id_w["xor_op"].eq(1)
-                    with m.Case(3):
+                    with m.Case(AluOp.ADD):
                         m.d.comb += pipe_id_w["add_op"].eq(1)
-                    with m.Case(4):
+                    with m.Case(AluOp.MUL):
                         m.d.comb += pipe_id_w["mul_op"].eq(1)
-                    with m.Case(5):
+                    with m.Case(AluOp.SHL):
                         m.d.comb += pipe_id_w["shl_op"].eq(1)
-                    with m.Case(6):
+                    with m.Case(AluOp.SHR):
                         m.d.comb += pipe_id_w["shr_op"].eq(1)
                     with m.Default():
                         m.d.comb += [pipe_id_w["cmp_op"].eq(1), pipe_id_w["write_reg"].eq(0)]
-            with m.Case(5):
+            with m.Case(Opcode.LDRF):
                 m.d.comb += [pipe_id_w["ldrf_op"].eq(1), pipe_id_w["write_reg"].eq(1)]
-                with m.Switch(inst[26:28]):
-                    with m.Case(0):
+                with m.Switch(flag_mode):
+                    with m.Case(FlagMode.Z):
                         m.d.comb += pipe_id_w["jmpz"].eq(1)
-                    with m.Case(1):
+                    with m.Case(FlagMode.NZ):
                         m.d.comb += pipe_id_w["jmpnz"].eq(1)
-                    with m.Case(2):
+                    with m.Case(FlagMode.C):
                         m.d.comb += pipe_id_w["jmpc"].eq(1)
                     with m.Default():
                         m.d.comb += pipe_id_w["jmpnc"].eq(1)
@@ -698,6 +706,17 @@ class Qrisc32(Elaboratable):
             dmem_wr_data.eq(pipe_ex_out["val_dst"]),
             dmem_wr.eq(pipe_ex_out["write_mem"]),
             pipe_stall.eq((pipe_ex_out["read_mem"] & dmem_rd_wait) | (pipe_ex_out["write_mem"] & dmem_wr_wait)),
+            new_address_valid.eq(
+                ~pipe_id_out["ldrf_op"]
+                & (
+                    pipe_id_out["jmpunc"]
+                    | (pipe_id_out["jmpz"] & flag_z)
+                    | (pipe_id_out["jmpnz"] & ~flag_z)
+                    | (pipe_id_out["jmpc"] & flag_c)
+                    | (pipe_id_out["jmpnc"] & ~flag_c)
+                )
+            ),
+            new_address.eq(pipe_ex_w["val_dst"]),
         ]
 
         with m.If(self.areset):
@@ -710,29 +729,62 @@ class Qrisc32(Elaboratable):
             m.d.sync += pipe_zero(pipe_wb_mem)
             m.d.sync += [
                 imem_addr.eq(0),
+                imem_rd.eq(0),
                 instruction.eq(0),
                 stalled_adr0.eq(0),
                 stalled_adr1.eq(0),
+                if_state.eq(if_fetch),
+                if_fetch_pc.eq(0),
+                if_hold_pc.eq(0),
+                bubble_counter.eq(0),
                 flag_z.eq(0),
                 flag_c.eq(0),
-                new_address_valid.eq(0),
-                new_address.eq(0),
             ]
             for reg in rf:
                 m.d.sync += reg.eq(0)
         with m.Else():
-            with m.If(~if_stall):
+            with m.If(new_address_valid):
                 m.d.sync += [
-                    instruction.eq(imem_data),
-                    imem_addr.eq(if_next_addr),
-                    stalled_adr0.eq(if_next_addr),
-                    stalled_adr1.eq(stalled_adr0),
+                    if_state.eq(if_fetch),
+                    instruction.eq(0),
+                    if_fetch_pc.eq(new_address),
+                    if_hold_pc.eq(new_address),
+                    imem_addr.eq(new_address),
+                    imem_rd.eq(1),
                 ]
+            with m.Elif(if_state == if_fetch):
+                m.d.sync += [
+                    imem_addr.eq(if_fetch_pc),
+                    imem_rd.eq(1),
+                    instruction.eq(0),
+                    if_hold_pc.eq(if_fetch_pc),
+                ]
+                with m.If(~imem_wait & imem_rd):
+                    m.d.sync += [
+                        instruction.eq(imem_data),
+                        if_fetch_pc.eq(if_fetch_pc + 4),
+                        if_state.eq(if_hold),
+                        imem_rd.eq(0),
+                    ]
             with m.Else():
-                m.d.sync += imem_addr.eq(stalled_adr0)
+                m.d.sync += imem_rd.eq(0)
+                with m.If(~pipe_stall & ~hazard_stall):
+                    m.d.sync += [
+                        instruction.eq(0),
+                        if_state.eq(if_fetch),
+                    ]
 
             with m.If(~pipe_stall):
-                m.d.sync += pipe_eq(pipe_id_out, pipe_id_w)
+                with m.If(new_address_valid | hazard_stall):
+                    m.d.sync += pipe_zero(pipe_id_out)
+                    with m.If(new_address_valid):
+                        m.d.sync += bubble_counter.eq(6)
+                    with m.Elif(bubble_counter != 0):
+                        m.d.sync += bubble_counter.eq(bubble_counter - 1)
+                with m.Else():
+                    m.d.sync += pipe_eq(pipe_id_out, pipe_id_w)
+                    with m.If(instruction != 0):
+                        m.d.sync += bubble_counter.eq(6)
 
             with m.If(pipe_wb_ex["write_reg"]):
                 m.d.sync += rf[pipe_wb_ex["dst_r"]].eq(pipe_wb_ex["val_dst"])
@@ -752,20 +804,6 @@ class Qrisc32(Elaboratable):
                 | pipe_id_out["cmp_op"]
             ):
                 m.d.sync += [flag_z.eq(flag_z_w), flag_c.eq(flag_c_w)]
-
-            with m.If(
-                pipe_id_out["jmpunc"]
-                | (pipe_id_out["jmpz"] & flag_z)
-                | (pipe_id_out["jmpnz"] & ~flag_z)
-                | (pipe_id_out["jmpc"] & flag_c)
-                | (pipe_id_out["jmpnc"] & ~flag_c)
-            ):
-                m.d.sync += [
-                    new_address_valid.eq(~pipe_id_out["ldrf_op"]),
-                    new_address.eq(pipe_ex_w["val_dst"]),
-                ]
-            with m.Else():
-                m.d.sync += new_address_valid.eq(0)
 
             with m.If(~pipe_stall):
                 m.d.sync += pipe_eq(pipe_ex_out, pipe_ex_w)

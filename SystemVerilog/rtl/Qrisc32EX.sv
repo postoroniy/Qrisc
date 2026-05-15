@@ -22,7 +22,7 @@
 `default_nettype none
 
 module Qrisc32EX(
-    input  logic                  clk,areset,pipe_stall,
+    input  logic                  clk,areset,pipe_stall,branch_flush,
     input  Qrisc_pack::pipe_struct_t pipe_ex_in,
     output Qrisc_pack::pipe_struct_t pipe_ex_out,
 
@@ -37,6 +37,8 @@ module Qrisc32EX(
     logic signed[31:0]   r2_add;
     logic[32:0]  summ_result;
     logic[32:0]  shl_result;
+    logic        new_address_valid_w;
+    logic[31:0]  new_address_w;
 
     Qrisc_pack::pipe_struct_t pipe_ex_out_w;
 
@@ -50,6 +52,8 @@ module Qrisc32EX(
         pipe_ex_out_w=pipe_ex_in;
         flagZ_w=0;
         flagC_w=0;
+        new_address_valid_w=1'b0;
+        new_address_w='0;
 
         if(pipe_ex_in.ldrf_op) begin
             if(   (pipe_ex_in.jmpz  && flagZ)
@@ -93,11 +97,19 @@ module Qrisc32EX(
             flagC_w=(pipe_ex_out_w.val_r1>=pipe_ex_out_w.val_r2)?0:1;
         end
         pipe_ex_out_w.val_r2 = (pipe_ex_out_w.incr_r2_enable)?r2_add:pipe_ex_out_w.val_r2;
+        if(pipe_ex_in.jmpunc || (pipe_ex_in.jmpz & flagZ) ||(pipe_ex_in.jmpnz & !flagZ)||
+            (pipe_ex_in.jmpc & flagC) ||(pipe_ex_in.jmpnc & !flagC) )
+        begin
+            new_address_valid_w=~pipe_ex_in.ldrf_op;
+            new_address_w=pipe_ex_out_w.val_dst;
+        end
+        new_address_valid = new_address_valid_w;
+        new_address = new_address_w;
     end
 
     always_ff@(posedge clk or posedge areset)
     if(areset)begin
-        {flagZ,flagC,new_address_valid,new_address,pipe_ex_out}<='0;
+        {flagZ,flagC,pipe_ex_out}<='0;
     end else begin
         flagZ<=
         (pipe_ex_in.and_op | pipe_ex_in.or_op | pipe_ex_in.xor_op | pipe_ex_in.add_op
@@ -107,16 +119,9 @@ module Qrisc32EX(
         (pipe_ex_in.and_op | pipe_ex_in.or_op | pipe_ex_in.xor_op | pipe_ex_in.add_op
         | pipe_ex_in.mul_op | pipe_ex_in.shl_op | pipe_ex_in.shr_op | pipe_ex_in.cmp_op)?flagC_w:flagC;
 
-        if(pipe_ex_in.jmpunc || (pipe_ex_in.jmpz & flagZ) ||(pipe_ex_in.jmpnz & !flagZ)||
-            (pipe_ex_in.jmpc & flagC) ||(pipe_ex_in.jmpnc & !flagC) )
-        begin
-            new_address_valid<=~pipe_ex_in.ldrf_op;
-            new_address<=pipe_ex_out_w.val_dst;
-        end
-        else
-            new_address_valid<=0;
-
-        if(~pipe_stall)
+        if(branch_flush) begin
+            pipe_ex_out <= '0;
+        end else if(~pipe_stall)
         begin
             pipe_ex_out<=pipe_ex_out_w;
             if(pipe_ex_in.read_mem| pipe_ex_in.write_mem)
