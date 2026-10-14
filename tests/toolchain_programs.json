@@ -1,0 +1,40 @@
+{
+  "programs": [
+    {"name": "asm_flags", "source": "examples/asm/flags.s", "expected_dmem": {"0": 5, "1": 7}, "pass": "PASS: asm_flags"},
+    {"name": "asm_axi_smoke", "source": "examples/asm/axi_smoke.s", "expected_dmem": {"0": 12, "1": 12}, "pass": "PASS: asm_axi_smoke", "axi": true},
+    {"name": "asm_hazards", "source": "tests/hazards.s", "expected_dmem": {"0": 19, "1": 24, "2": 24, "3": 3, "4": 31, "5": 0, "6": 42, "7": 11, "8": 100, "9": 19, "10": 5, "11": 0, "12": 77}, "pass": "PASS: asm_hazards"},
+    {"name": "asm_control_flush", "source": "examples/asm/control_flush.s", "expected_dmem": {"0": 0, "1": 0, "2": 7, "3": 9, "4": 0, "5": 0}, "pass": "PASS: asm_control_flush"},
+    {"name": "c_flags", "source": "examples/c/flags.c", "expected_dmem": {"0": 5, "1": 7}, "pass": "PASS: c_flags"},
+    {
+      "name": "c_bubble_sort",
+      "source": "examples/c/bubble_sort.c",
+      "sort_cases": {
+        "reversed": [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+        "mixed": [37, 12, 84, 5, 68, 21, 9, 53, 44, 16],
+        "sorted": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      },
+      "max_cycles": 250000
+    },
+    {
+      "name": "c_shell_modified",
+      "source": "examples/c/shell_modified.c",
+      "sort_cases": {
+        "reversed": [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+        "mixed": [37, 12, 84, 5, 68, 21, 9, 53, 44, 16],
+        "sorted": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      },
+      "max_cycles": 250000
+    },
+    {
+      "name": "c_shell_first",
+      "source": "examples/c/shell_first.c",
+      "sort_cases": {
+        "reversed": [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+        "mixed": [37, 12, 84, 5, 68, 21, 9, 53, 44, 16],
+        "sorted": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      },
+      "max_cycles": 250000
+    },
+    {"name": "c_signed", "source": "examples/c/signed.c", "expected_dmem": {"0": 1, "1": 0, "2": 4294967292, "3": 1, "4": 2, "5": 3, "6": 1, "7": 1, "8": 1, "9": 4294967295, "10": 4294967295, "11": 4294967294, "12": 1, "13": 4, "14": 7}, "pass": "PASS: c_signed"}
+  ]
+}

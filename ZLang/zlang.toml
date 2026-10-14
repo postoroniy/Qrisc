@@ -1,0 +1,6 @@
+schema = 1
+
+[project]
+name = "qrisc32"
+version = "0.1.0"
+source-root = "src"

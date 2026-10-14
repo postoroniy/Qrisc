@@ -48,9 +48,11 @@ module qrisc32(Qrisc_if #(1, 32,32, 1));
     FIFOF#(Pipe_s) exeFifo <- mkFIFOF;
     FIFOF#(Pipe_s) wbExFifo <- mkFIFOF;
     FIFOF#(Pipe_s) wbMemFifo <- mkFIFOF;
+    FIFOF#(Pipe_s) retiredExFifo <- mkFIFOF;
+    FIFOF#(Pipe_s) retiredMemFifo <- mkFIFOF;
 
     RF_IFC registerFile <- qrisc32_RF;
-    WB_IFC writebackStage <- qrisc32_WB(wbExFifo, wbMemFifo, registerFile);
+    WB_IFC writebackStage <- qrisc32_WB(wbExFifo, wbMemFifo, retiredExFifo, retiredMemFifo, registerFile);
 
     MEM_ifc#(1, 32, 32, 1) memStage <- qrisc32_MEM(1, 32, 32, 1, exeFifo, wbMemFifo);
     IF_ifc#(1, 32, 32, 1) instructionFetchStage <- qrisc32_IF(
@@ -66,8 +68,9 @@ module qrisc32(Qrisc_if #(1, 32,32, 1));
     Empty instructionDecodeStage <- qrisc32_ID(
         instructionFifo,
         decodeFifo,
+        retiredExFifo,
+        retiredMemFifo,
         registerFile,
-        writebackStage,
         id_flush
     );
     EX_ifc instructionExecuteStage <- qrisc32_EX(decodeFifo, exeFifo, wbExFifo);

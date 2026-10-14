@@ -5,18 +5,10 @@
   LDRL r1, 5
   LDRH r2, 0
   LDRL r2, 7
-  NOP
-  NOP
-  NOP
   ADD r3, r1, r2
-  NOP
-  NOP
-  NOP
   STRP r3, [r0 + 0]
-  NOP
-  NOP
-  NOP
   LDRP r4, [r0 + 0]
+  STRP r4, [r0 + 4]
 halt:
   JMP halt
   NOP

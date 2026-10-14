@@ -15,7 +15,31 @@ interface QriscIfc =
     axi_instruction :: AXI4_Master_IFC 1 32 32 1
     axi_data :: AXI4_Master_IFC 1 32 32 1
 
-data CoreState = FetchReq | FetchResp | Decode | Execute | DataReadResp | DataWriteResp | WriteBack
+struct FetchPacket =
+    address :: Word32
+    instruction :: Word32
+  deriving (Bits)
+
+data MemKind = NoMem | LoadData | StoreData
+  deriving (Bits, Eq)
+
+struct PipeWork =
+    instr :: Word32
+    kind :: MemKind
+    addr :: Word32
+    dataWord :: Word32
+    writeReg :: Bool
+    dst :: RegIdx
+    writeValue :: Word32
+    incEn :: Bool
+    incTarget :: RegIdx
+    incValue :: Word32
+    flagsWrite :: Bool
+    zValue :: Bool
+    cValue :: Bool
+  deriving (Bits)
+
+data DataPhase = DataIdle | WaitRead | WaitWrite
   deriving (Bits, Eq)
 
 sext15 :: Bit 15 -> Word32
@@ -37,45 +61,112 @@ incWord source incr =
         incrInt = extend incr
     in pack (sourceInt + incrInt)
 
+regMask :: RegIdx -> Word32
+regMask idx = 32'h1 << idx
+
+readMask :: Word32 -> Word32
+readMask inst =
+    let op :: Opcode
+        op = unpack inst[31:28]
+        loadMode :: LoadMode
+        loadMode = unpack inst[27:26]
+        jumpMode :: JumpMode
+        jumpMode = unpack inst[27:26]
+        incMode :: IncrMode
+        incMode = unpack inst[24:22]
+        regOffset = inst[25:25] == 1
+        inc = tpl_2 (incrValue incMode)
+        read1 = op == OpAlu || op == OpLdrF || op == OpStr ||
+            (op == OpLdr && (loadMode == LoadReg || loadMode == LoadMem))
+        read2 = op == OpAlu || op == OpLdrF ||
+            (op == OpLdr && loadMode == LoadReg && inc) ||
+            (regOffset && (op == OpStr || (op == OpLdr && loadMode == LoadMem) ||
+                (op == OpJmpUnc && jumpMode /= JumpAbs) || op == OpJmpF))
+        readDst = op == OpStr ||
+            (op == OpLdr && (loadMode == LoadHigh || loadMode == LoadLow)) ||
+            (op == OpJmpUnc && jumpMode == JumpRet)
+    in (if read1 then regMask inst[9:5] else 0) |
+       (if read2 then regMask inst[14:10] else 0) |
+       (if readDst then regMask inst[4:0] else 0)
+
+writeMask :: Word32 -> Word32
+writeMask inst =
+    let op :: Opcode
+        op = unpack inst[31:28]
+        loadMode :: LoadMode
+        loadMode = unpack inst[27:26]
+        jumpMode :: JumpMode
+        jumpMode = unpack inst[27:26]
+        aluOp :: AluOp
+        aluOp = unpack inst[27:25]
+        incMode :: IncrMode
+        incMode = unpack inst[24:22]
+        regOffset = inst[25:25] == 1
+        inc = tpl_2 (incrValue incMode)
+        writeDst = case op of
+            OpLdr -> loadMode /= LoadReg || inst[4:0] /= inst[9:5]
+            OpAlu -> aluOp /= AluCmp
+            OpLdrF -> True
+            OpJmpUnc -> jumpMode == JumpCall
+            _ -> False
+        writeInc = case op of
+            OpLdr -> if loadMode == LoadReg then inc else loadMode == LoadMem && regOffset
+            OpStr -> regOffset
+            OpJmpUnc -> jumpMode /= JumpAbs && regOffset
+            OpJmpF -> regOffset
+            OpAlu -> inc
+            OpLdrF -> inc
+            _ -> False
+    in (if writeDst then regMask inst[4:0] else 0) |
+       (if writeInc then regMask inst[14:10] else 0)
+
+usesFlags :: Word32 -> Bool
+usesFlags inst =
+    let op :: Opcode
+        op = unpack inst[31:28]
+    in op == OpJmpF || op == OpLdrF
+
+writesFlags :: Word32 -> Bool
+writesFlags inst =
+    let op :: Opcode
+        op = unpack inst[31:28]
+    in op == OpAlu
+
+isControl :: Word32 -> Bool
+isControl inst =
+    let op :: Opcode
+        op = unpack inst[31:28]
+    in op == OpJmpUnc || op == OpJmpF
+
+baseWork :: Word32 -> RegIdx -> RegIdx -> Word32 -> Int 4 -> Bool -> PipeWork
+baseWork inst dst src2 r2 incr increment =
+    PipeWork {
+        instr = inst; kind = NoMem; addr = 0; dataWord = 0;
+        writeReg = False; dst = dst; writeValue = 0;
+        incEn = increment; incTarget = src2; incValue = incWord r2 incr;
+        flagsWrite = False; zValue = False; cValue = False
+    }
+
 rdAddr :: Word32 -> AXI4_Rd_Addr 1 32 1
-rdAddr addr =
+rdAddr address =
     AXI4_Rd_Addr {
-        arid = 0;
-        araddr = addr;
-        arlen = 0;
-        arsize = axsize_4;
-        arburst = axburst_incr;
-        arlock = 0;
-        arcache = 0;
-        arprot = 0;
-        arqos = 0;
-        arregion = 0;
-        aruser = 0
+        arid = 0; araddr = address; arlen = 0; arsize = axsize_4;
+        arburst = axburst_incr; arlock = 0; arcache = 0; arprot = 0;
+        arqos = 0; arregion = 0; aruser = 0
     }
 
 wrAddr :: Word32 -> AXI4_Wr_Addr 1 32 1
-wrAddr addr =
+wrAddr address =
     AXI4_Wr_Addr {
-        awid = 0;
-        awaddr = addr;
-        awlen = 0;
-        awsize = axsize_4;
-        awburst = axburst_incr;
-        awlock = 0;
-        awcache = 0;
-        awprot = 0;
-        awqos = 0;
-        awregion = 0;
-        awuser = 0
+        awid = 0; awaddr = address; awlen = 0; awsize = axsize_4;
+        awburst = axburst_incr; awlock = 0; awcache = 0; awprot = 0;
+        awqos = 0; awregion = 0; awuser = 0
     }
 
 wrData :: Word32 -> AXI4_Wr_Data 32 1
 wrData value =
     AXI4_Wr_Data {
-        wdata = value;
-        wstrb = 4'b1111;
-        wlast = True;
-        wuser = 0
+        wdata = value; wstrb = 4'b1111; wlast = True; wuser = 0
     }
 
 {-# synthesize mkQrisc32 #-}
@@ -86,93 +177,87 @@ mkQrisc32 =
         masterData :: AXI4_Master_Xactor_IFC 1 32 32 1 <- mkAXI4_Master_Xactor_2
 
         rf :: Vector 32 (Reg Word32) <- replicateM (mkReg 0)
-        pc :: Reg Word32 <- mkReg 0
-        state :: Reg CoreState <- mkReg FetchReq
-        instReg :: Reg Word32 <- mkReg 0
-
         flagZ :: Reg Bool <- mkReg False
         flagC :: Reg Bool <- mkReg False
 
-        pendingNextPc :: Reg Word32 <- mkReg 0
-        pendingIncEn :: Reg Bool <- mkReg False
-        pendingIncTarget :: Reg RegIdx <- mkReg 0
-        pendingIncValue :: Reg Word32 <- mkReg 0
-        pendingReadDst :: Reg RegIdx <- mkReg 0
+        fetched :: FIFOF FetchPacket <- mkFIFOF1
+        decoded :: FIFOF FetchPacket <- mkFIFOF1
+        executed :: FIFOF PipeWork <- mkFIFOF1
+        writebacks :: FIFOF PipeWork <- mkFIFOF1
 
-        wbNextPc :: Reg Word32 <- mkReg 0
-        wbWriteReg :: Reg Bool <- mkReg False
-        wbDst :: Reg RegIdx <- mkReg 0
-        wbValue :: Reg Word32 <- mkReg 0
-        wbIncEn :: Reg Bool <- mkReg False
-        wbIncTarget :: Reg RegIdx <- mkReg 0
-        wbIncValue :: Reg Word32 <- mkReg 0
-        wbFlagsWrite :: Reg Bool <- mkReg False
-        wbFlagZ :: Reg Bool <- mkReg False
-        wbFlagC :: Reg Bool <- mkReg False
+        fetchPc :: Reg Word32 <- mkReg 0
+        requestPc :: Reg Word32 <- mkReg 0
+        fetchPending :: Reg Bool <- mkReg False
+        discardResponse :: Reg Bool <- mkReg False
+        redirectPending :: Reg Bool <- mkReg False
+        redirectPc :: Reg Word32 <- mkReg 0
+        controlPending :: Reg Bool <- mkReg False
+        dataPhase :: Reg DataPhase <- mkReg DataIdle
 
         let rfRead idx = (select rf idx)._read
             rfWrite idx value = (select rf idx) := value
 
-            queueWriteback nextPc writeEn dst writeValue incEn incTarget incValue flagsWrite zValue cValue =
-                action
-                    wbNextPc := nextPc
-                    wbWriteReg := writeEn
-                    wbDst := dst
-                    wbValue := writeValue
-                    wbIncEn := incEn
-                    wbIncTarget := incTarget
-                    wbIncValue := incValue
-                    wbFlagsWrite := flagsWrite
-                    wbFlagZ := zValue
-                    wbFlagC := cValue
-                    state := WriteBack
-
-            finishNoWrite nextPc incEn incTarget incSource incr =
-                queueWriteback nextPc False 0 0 incEn incTarget (incWord incSource incr) False False False
-
-            finishWrite nextPc dst writeValue incEn incTarget incSource incr =
-                queueWriteback nextPc True dst writeValue incEn incTarget (incWord incSource incr) False False False
-
-            finishWriteFlags nextPc dst writeValue incEn incTarget incSource incr zValue cValue =
-                queueWriteback nextPc True dst writeValue incEn incTarget (incWord incSource incr) True zValue cValue
-
-            finishFlagsOnly nextPc incEn incTarget incSource incr zValue cValue =
-                queueWriteback nextPc False 0 0 incEn incTarget (incWord incSource incr) True zValue cValue
-
-            armPending nextPc incEn incTarget incSource incr =
-                action
-                    pendingNextPc := nextPc
-                    pendingIncEn := incEn
-                    pendingIncTarget := incTarget
-                    pendingIncValue := incWord incSource incr
-
         rules
-          "issueFetch": when state == FetchReq && masterInst.i_rd_addr.notFull ==>
+          "fetchRedirect": when redirectPending ==>
             action
-                masterInst.i_rd_addr.enq (rdAddr pc)
-                state := FetchResp
+                fetchPc := redirectPc
+                if fetched.notEmpty
+                    then fetched.deq
+                    else noAction
+                if fetchPending
+                    then discardResponse := True
+                    else noAction
+                redirectPending := False
 
-          "acceptFetch": when state == FetchResp && masterInst.o_rd_data.notEmpty ==>
+          "fetchIssue": when not fetchPending && not redirectPending &&
+                not controlPending && fetched.notFull && masterInst.i_rd_addr.notFull ==>
+            action
+                masterInst.i_rd_addr.enq (rdAddr fetchPc)
+                requestPc := fetchPc
+                fetchPc := fetchPc + 4
+                fetchPending := True
+
+          "fetchAccept": when fetchPending && not redirectPending &&
+                masterInst.o_rd_data.notEmpty &&
+                (discardResponse || fetched.notFull) ==>
             action
                 let resp = masterInst.o_rd_data.first
                 masterInst.o_rd_data.deq
-                instReg := resp.rdata
-                state := Decode
+                fetchPending := False
+                if discardResponse
+                    then discardResponse := False
+                    else fetched.enq (FetchPacket {
+                        address = requestPc; instruction = resp.rdata
+                    })
 
-          "decode": when state == Decode ==>
+          "decode": when fetched.notEmpty && decoded.notFull &&
+                not controlPending && not redirectPending ==>
             action
-                state := Execute
+                let inst = fetched.first.instruction
+                    busyRegs =
+                        (if executed.notEmpty then writeMask executed.first.instr else 0) |
+                        (if writebacks.notEmpty then writeMask writebacks.first.instr else 0)
+                    busyFlags =
+                        (executed.notEmpty && writesFlags executed.first.instr) ||
+                        (writebacks.notEmpty && writesFlags writebacks.first.instr)
+                if ((readMask inst | writeMask inst) & busyRegs) == 0 &&
+                    not (usesFlags inst && busyFlags)
+                    then action
+                        decoded.enq fetched.first
+                        fetched.deq
+                        if isControl inst
+                            then controlPending := True
+                            else noAction
+                    else noAction
 
-          "execute": when state == Execute ==>
+          "execute": when decoded.notEmpty && executed.notFull ==>
             action
-                let inst :: Word32
-                    inst = instReg
-                    archPc :: Word32
-                    archPc = pc + 8
-                    nextPcDefault :: Word32
-                    nextPcDefault = pc + 4
-                    opcode :: Opcode
-                    opcode = unpack inst[31:28]
+                let pkt = decoded.first
+                    inst :: Word32
+                    inst = pkt.instruction
+                    archPc = pkt.address + 8
+                    op :: Opcode
+                    op = unpack inst[31:28]
                     loadMode :: LoadMode
                     loadMode = unpack inst[27:26]
                     jumpMode :: JumpMode
@@ -191,143 +276,161 @@ mkQrisc32 =
                     imm16 = inst[20:5]
                     off15 :: Bit 15
                     off15 = inst[24:10]
-                    incrInfo = incrValue (unpack inst[24:22])
-                    incr = tpl_1 incrInfo
-                    incrEnDefault = tpl_2 incrInfo
+                    incInfo = incrValue (unpack inst[24:22])
+                    incr = tpl_1 incInfo
+                    defaultInc = tpl_2 incInfo
                     r1 :: Word32
                     r1 = rfRead src1
                     r2 :: Word32
                     r2 = rfRead src2
                     dstVal :: Word32
                     dstVal = rfRead dst
-                    offset :: Word32
-                    offset = if inst[25:25] == 1 then r2 else sext15 off15
-                case opcode of
-                    OpLdr ->
-                        case loadMode of
-                            LoadReg ->
-                                if dst /= src1
-                                    then finishWrite nextPcDefault dst r1 incrEnDefault src2 r2 incr
-                                    else finishNoWrite nextPcDefault incrEnDefault src2 r2 incr
-                            LoadHigh ->
-                                finishWrite nextPcDefault dst ((imm16 ++ dstVal[15:0]) :: Word32) False src2 r2 incr
-                            LoadLow ->
-                                finishWrite nextPcDefault dst ((dstVal[31:16] ++ imm16) :: Word32) False src2 r2 incr
-                            LoadMem ->
-                                if masterData.i_rd_addr.notFull
-                                    then action
-                                        let addr :: Word32
-                                            addr = r1 + offset
-                                            incEn = inst[25:25] == 1
-                                        masterData.i_rd_addr.enq (rdAddr addr)
-                                        pendingReadDst := dst
-                                        armPending nextPcDefault incEn src2 r2 incr
-                                        state := DataReadResp
-                                    else noAction
-                    OpStr ->
-                        if masterData.i_wr_addr.notFull && masterData.i_wr_data.notFull
-                            then action
-                                let addr :: Word32
-                                    addr = r1 + offset
-                                    incEn = inst[25:25] == 1
-                                masterData.i_wr_addr.enq (wrAddr addr)
-                                masterData.i_wr_data.enq (wrData dstVal)
-                                armPending nextPcDefault incEn src2 r2 incr
-                                state := DataWriteResp
-                            else noAction
-                    OpJmpUnc ->
-                        case jumpMode of
-                            JumpAbs ->
-                                finishNoWrite (zext26 inst[25:0]) False src2 r2 incr
-                            JumpRel ->
-                                let incEn = inst[25:25] == 1
-                                in finishNoWrite (archPc + offset) incEn src2 r2 incr
-                            JumpCall ->
-                                let incEn = inst[25:25] == 1
-                                in finishWrite (archPc + offset) dst archPc incEn src2 r2 incr
-                            JumpRet ->
-                                let incEn = inst[25:25] == 1
-                                in finishNoWrite dstVal incEn src2 r2 incr
-                    OpJmpF ->
-                        let cond = flagCond flagMode flagZ flagC
-                            nextPc = if cond then archPc + offset else nextPcDefault
-                            incEn = inst[25:25] == 1
-                        in finishNoWrite nextPc incEn src2 r2 incr
-                    OpAlu ->
-                        case aluOp of
-                            AluAnd ->
-                                let value = r1 & r2
-                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) False
-                            AluOr ->
-                                let value = r1 | r2
-                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) False
-                            AluXor ->
-                                let value = r1 ^ r2
-                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) False
-                            AluAdd ->
-                                let result :: Bit 33
-                                    result = zeroExtend r1 + zeroExtend r2
-                                    value :: Word32
-                                    value = result[31:0]
-                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) (result[32:32] == 1)
-                            AluMul ->
-                                let prod :: Bit 64
-                                    prod = zeroExtend r1 * zeroExtend r2
-                                    value :: Word32
-                                    value = prod[31:0]
-                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) (prod[32:32] == 1)
-                            AluShl ->
-                                let shl :: Bit 33
-                                    shl = zeroExtend r1 << r2[4:0]
-                                    value :: Word32
-                                    value = shl[31:0]
-                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) (shl[32:32] == 1)
-                            AluShr ->
-                                let shr :: Bit 33
-                                    shr = (r1 ++ 1'b0) >> r2[4:0]
-                                    value :: Word32
-                                    value = shr[32:1]
-                                in finishWriteFlags nextPcDefault dst value incrEnDefault src2 r2 incr (value == 0) (shr[0:0] == 1)
-                            AluCmp ->
-                                finishFlagsOnly nextPcDefault incrEnDefault src2 r2 incr (r1 == r2) (r1 < r2)
-                    OpLdrF ->
-                        let cond = flagCond flagMode flagZ flagC
-                            value = if cond then r1 else r2
-                        in finishWrite nextPcDefault dst value incrEnDefault src2 r2 incr
-                    _ ->
-                        finishNoWrite nextPcDefault incrEnDefault src2 r2 incr
+                    regOffset = inst[25:25] == 1
+                    offset = if regOffset then r2 else sext15 off15
+                    base = baseWork inst dst src2 r2 incr defaultInc
+                    cond = flagCond flagMode flagZ flagC
+                    jumpTarget = case jumpMode of
+                        JumpAbs -> zext26 inst[25:0]
+                        JumpRel -> archPc + offset
+                        JumpCall -> archPc + offset
+                        JumpRet -> dstVal
+                    redirect = op == OpJmpUnc || (op == OpJmpF && cond)
+                    target = if op == OpJmpF then archPc + offset else jumpTarget
+                    result :: PipeWork
+                    result = case op of
+                        OpLdr -> case loadMode of
+                            LoadReg -> base { writeReg = dst /= src1; writeValue = r1 }
+                            LoadHigh -> base {
+                                writeReg = True;
+                                writeValue = ((imm16 ++ dstVal[15:0]) :: Word32);
+                                incEn = False
+                            }
+                            LoadLow -> base {
+                                writeReg = True;
+                                writeValue = ((dstVal[31:16] ++ imm16) :: Word32);
+                                incEn = False
+                            }
+                            LoadMem -> base {
+                                kind = LoadData; addr = r1 + offset;
+                                writeReg = True; incEn = regOffset
+                            }
+                        OpStr -> base {
+                            kind = StoreData; addr = r1 + offset;
+                            dataWord = dstVal; incEn = regOffset
+                        }
+                        OpJmpUnc -> case jumpMode of
+                            JumpAbs -> base { incEn = False }
+                            JumpRel -> base { incEn = regOffset }
+                            JumpCall -> base {
+                                writeReg = True; writeValue = archPc; incEn = regOffset
+                            }
+                            JumpRet -> base { incEn = regOffset }
+                        OpJmpF -> base { incEn = regOffset }
+                        OpAlu ->
+                            let aluResult :: (Word32, Bool)
+                                aluResult = case aluOp of
+                                    AluAnd -> (r1 & r2, False)
+                                    AluOr -> (r1 | r2, False)
+                                    AluXor -> (r1 ^ r2, False)
+                                    AluAdd ->
+                                        let extended :: Bit 33
+                                            extended = zeroExtend r1 + zeroExtend r2
+                                        in (extended[31:0], extended[32:32] == 1)
+                                    AluMul ->
+                                        let product :: Bit 64
+                                            product = zeroExtend r1 * zeroExtend r2
+                                        in (product[31:0], product[32:32] == 1)
+                                    AluShl ->
+                                        let shifted :: Bit 33
+                                            shifted = zeroExtend r1 << r2[4:0]
+                                        in (shifted[31:0], shifted[32:32] == 1)
+                                    AluShr ->
+                                        let shifted :: Bit 33
+                                            shifted = (r1 ++ 1'b0) >> r2[4:0]
+                                        in (shifted[32:1], shifted[0:0] == 1)
+                                    AluCmp -> (0, r1 < r2)
+                                value = tpl_1 aluResult
+                                carry = tpl_2 aluResult
+                            in base {
+                                writeReg = aluOp /= AluCmp;
+                                writeValue = value; flagsWrite = True;
+                                zValue = if aluOp == AluCmp then r1 == r2 else value == 0;
+                                cValue = carry
+                            }
+                        OpLdrF -> base {
+                            writeReg = True; writeValue = if cond then r1 else r2
+                        }
+                        _ -> base
+                decoded.deq
+                executed.enq result
+                if isControl inst
+                    then controlPending := False
+                    else noAction
+                if redirect
+                    then action
+                        redirectPc := target
+                        redirectPending := True
+                    else noAction
 
-          "finishDataRead": when state == DataReadResp && masterData.o_rd_data.notEmpty ==>
+          "memForward": when executed.notEmpty && executed.first.kind == NoMem &&
+                writebacks.notFull && dataPhase == DataIdle ==>
+            action
+                writebacks.enq executed.first
+                executed.deq
+
+          "memStartRead": when executed.notEmpty && executed.first.kind == LoadData &&
+                dataPhase == DataIdle && masterData.i_rd_addr.notFull ==>
+            action
+                masterData.i_rd_addr.enq (rdAddr executed.first.addr)
+                dataPhase := WaitRead
+
+          "memFinishRead": when executed.notEmpty && dataPhase == WaitRead &&
+                masterData.o_rd_data.notEmpty && writebacks.notFull ==>
             action
                 let resp = masterData.o_rd_data.first
                 masterData.o_rd_data.deq
-                queueWriteback pendingNextPc True pendingReadDst resp.rdata pendingIncEn pendingIncTarget pendingIncValue False False False
+                writebacks.enq (executed.first {
+                    kind = NoMem; writeValue = resp.rdata
+                })
+                executed.deq
+                dataPhase := DataIdle
 
-          "finishDataWrite": when state == DataWriteResp && masterData.o_wr_resp.notEmpty ==>
+          "memStartWrite": when executed.notEmpty && executed.first.kind == StoreData &&
+                dataPhase == DataIdle && masterData.i_wr_addr.notFull &&
+                masterData.i_wr_data.notFull ==>
+            action
+                masterData.i_wr_addr.enq (wrAddr executed.first.addr)
+                masterData.i_wr_data.enq (wrData executed.first.dataWord)
+                dataPhase := WaitWrite
+
+          "memFinishWrite": when executed.notEmpty && dataPhase == WaitWrite &&
+                masterData.o_wr_resp.notEmpty && writebacks.notFull ==>
             action
                 masterData.o_wr_resp.deq
-                queueWriteback pendingNextPc False 0 0 pendingIncEn pendingIncTarget pendingIncValue False False False
+                writebacks.enq (executed.first { kind = NoMem })
+                executed.deq
+                dataPhase := DataIdle
 
-          "writeback": when state == WriteBack ==>
+          "writeback": when writebacks.notEmpty ==>
             action
-                if wbIncEn
+                let p = writebacks.first
+                writebacks.deq
+                if p.incEn
                     then
-                        if wbWriteReg && wbDst /= wbIncTarget
+                        if p.writeReg && p.dst /= p.incTarget
                             then action
-                                rfWrite wbDst wbValue
-                                rfWrite wbIncTarget wbIncValue
-                            else rfWrite wbIncTarget wbIncValue
+                                rfWrite p.dst p.writeValue
+                                rfWrite p.incTarget p.incValue
+                            else rfWrite p.incTarget p.incValue
                     else
-                        if wbWriteReg
-                            then rfWrite wbDst wbValue
+                        if p.writeReg
+                            then rfWrite p.dst p.writeValue
                             else noAction
-                if wbFlagsWrite
+                if p.flagsWrite
                     then action
-                        flagZ := wbFlagZ
-                        flagC := wbFlagC
+                        flagZ := p.zValue
+                        flagC := p.cValue
                     else noAction
-                pc := wbNextPc
-                state := FetchReq
 
         interface
             axi_instruction = masterInst.axi_side

@@ -1,11 +1,10 @@
 # qrisc32 in SystemVerilog
 
-Status: canonical reference implementation.
+This directory contains the reference qrisc32 implementation.
 
 The public `qrisc32` top level exposes single-beat AXI4-style instruction and
 data master interfaces.  The instruction side is read-only; the data side has
-read and write channels.  The internal pipeline behavior remains the canonical
-SystemVerilog reference.  The RTL is organized as an explicit five-stage
+read and write channels. The RTL is organized as an explicit five-stage
 pipeline: instruction fetch, instruction decode, execute, memory, and
 writeback.  The register file is a standalone RTL block read by ID and written
 from WB.
@@ -28,8 +27,7 @@ make -C SystemVerilog axi
 
 The smoke, flags, and ISA testbenches load shared programs from `../tests/` and
 check the expected data-memory results through AXI memory models.  Other
-language ports should match these
-results before being treated as implemented.
+implementations must match these results.
 
 The `axi` target reuses the smoke program with checked AXI memories that apply
 deterministic backpressure, delay read/write responses, and fail on invalid

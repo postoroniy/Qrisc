@@ -1,9 +1,11 @@
-export PATH:=${HOME}/projects/bluespec/bsc/inst/bin:$(PATH)
-
-DISTRO ?= ${HOME}/projects/bluespec/bsc/inst/lib
-BSC ?= bsc
+BSC_HOME ?=
+BSC ?= $(if $(BSC_HOME),$(BSC_HOME)/bin/bsc,bsc)
+DISTRO ?= $(if $(BSC_HOME),$(BSC_HOME)/lib,)
 VERILATOR ?= verilator
-BSV_LIBS ?= ${HOME}/projects/bluespec/Piccolo
+BSV_LIBS ?= $(PICCOLO_ROOT)
+ifneq ($(strip $(BSC_HOME)),)
+export PATH := $(BSC_HOME)/bin:$(PATH)
+endif
 RTL_DIR ?= rtl
 TB_DIR ?= tb
 BUILD_DIR ?= build
@@ -41,6 +43,14 @@ VERILOG_OUTPUT = $(VDIR)/$(BSC_TOP).v
 all: smoke flags isa axi hazards
 test: all
 
+.PHONY: check-toolchain
+check-toolchain:
+	@test -s "$(DISTRO)/Verilog/FIFO1.v" || { echo "Set BSC_HOME (or DISTRO) to the Bluespec installation" >&2; exit 1; }
+	@test -s "$(BSV_LIBS)/src_Testbench/Fabrics/AXI4/AXI4_Types.bsv" || { echo "Set PICCOLO_ROOT (or BSV_LIBS) to the Piccolo checkout" >&2; exit 1; }
+	@command -v "$(BSC)" >/dev/null || { echo "Bluespec compiler not found: $(BSC)" >&2; exit 1; }
+
+smoke flags isa axi hazards model-smoke model-flags model-isa model-axi model-hazards lint: check-toolchain
+
 $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR) $(HEXDIR) $(VCD_DIR):
 	mkdir -p $@
 
@@ -60,7 +70,7 @@ define RUN_BSC_TEST
 	status=$$?; \
 	cat "$$log"; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
-	grep -q '$(3)' "$$log"; \
+	grep -q '$(3)' "$$log" || exit 1; \
 	test -s "$$vcd"
 endef
 
@@ -96,7 +106,7 @@ model-axi: $(AXI_HEX) $(RF_ZERO_HEX) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR)
 model-hazards: $(HAZARDS_HEX) $(DMEM_ZERO_HEX) $(RF_ZERO_HEX) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR) $(SDIR) $(VCD_DIR)
 	$(call RUN_BSC_TEST,mkModelHazardsTest,ModelHazardsTest,PASS: hazard interlock vector)
 
-$(VERILOG_OUTPUT): $(RTL_DIR)/Qrisc32RTL.bs $(RTL_DIR)/Qrisc_pack.bs | $(BDIR) $(IDIR) $(VDIR)
+$(VERILOG_OUTPUT): $(RTL_DIR)/Qrisc32RTL.bs $(RTL_DIR)/Qrisc_pack.bs | check-toolchain $(BDIR) $(IDIR) $(VDIR)
 	$(BSC) $(BSC_VERILOG_FLAGS) -remove-dollar -g $(BSC_TOP) -verilog $(RTL_DIR)/Qrisc32RTL.bs
 	test -s $(VERILOG_OUTPUT)
 
@@ -104,7 +114,7 @@ verilog: $(VERILOG_OUTPUT)
 
 synth: verilog
 	mkdir -p $(BDIR)/yosys
-	yosys -s ys
+	yosys -p 'read_verilog "$(DISTRO)/Verilog/FIFO1.v"; read_verilog "$(DISTRO)/Verilog/FIFO2.v"; script ys'
 
 lint: BSC_FLAGS = $(BSC_SOURCE_LINT_FLAGS)
 lint: $(SMOKE_HEX) $(SMOKE_INIT_HEX) $(FLAGS_HEX) $(ISA_HEX) $(DMEM_ZERO_HEX) $(AXI_HEX) $(HAZARDS_HEX) $(VERILOG_OUTPUT) $(LINT_WAIVERS) | $(BDIR) $(IDIR) $(VDIR) $(SIMDIR)

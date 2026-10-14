@@ -6,14 +6,12 @@ BUILD_DIR=build/verilator
 VCD_DIR=build/vcd
 
 RTL_SRC=$(RTL_DIR)/Qrisc_pack.sv $(RTL_DIR)/Qrisc32RF.sv $(RTL_DIR)/Qrisc32WB.sv $(RTL_DIR)/Qrisc32EX.sv $(RTL_DIR)/Qrisc32ID.sv $(RTL_DIR)/Qrisc32IF.sv $(RTL_DIR)/Qrisc32MEM.sv $(RTL_DIR)/Qrisc32.sv
-SRC=$(TB_DIR)/axi_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32Tb.sv
 SRC_SMOKE=$(TB_DIR)/axi_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32SmokeTb.sv
 SRC_FLAGS=$(TB_DIR)/axi_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32FlagsTb.sv
 SRC_ISA=$(TB_DIR)/axi_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32IsaTb.sv
 SRC_AXI=$(TB_DIR)/axi_checked_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32AxiTb.sv
 SRC_TOOLCHAIN=$(TB_DIR)/axi_mem.sv $(RTL_SRC) $(TB_DIR)/Qrisc32ToolchainTb.sv
 
-TB_BUILD=$(BUILD_DIR)/legacy
 SMOKE_BUILD=$(BUILD_DIR)/smoke
 FLAGS_BUILD=$(BUILD_DIR)/flags
 ISA_BUILD=$(BUILD_DIR)/isa
@@ -34,14 +32,6 @@ all: smoke flags isa axi hazards
 
 $(VCD_DIR) $(HAZARDS_TB_DIR):
 	mkdir -p $@
-
-$(TB_BUILD)/Vqrisc32_tb: $(SRC) $(CPP_DIR)/Qrisc32Tb.cpp
-	mkdir -p $(TB_BUILD)
-	$(VERILATOR_ENV) verilator --cc --exe $(VERILATOR_CFLAGS) $(SRC) --Mdir $(TB_BUILD) --threads $(VERILATOR_THREADS) --build $(CPP_DIR)/Qrisc32Tb.cpp --top qrisc32_tb
-
-$(VCD_DIR)/qrisc32_tb.vcd: $(TB_BUILD)/Vqrisc32_tb | $(VCD_DIR)
-	./$(TB_BUILD)/Vqrisc32_tb
-	test -s $(VCD_DIR)/qrisc32_tb.vcd
 
 $(SMOKE_BUILD)/Vqrisc32_smoke_tb: $(SRC_SMOKE) $(CPP_DIR)/Qrisc32SmokeTb.cpp
 	mkdir -p $(SMOKE_BUILD)
@@ -91,7 +81,7 @@ $(HAZARDS_TB_DIR)/.stamp: ../Clash/tb/gen_vector_bench.py ../tests/vectors.json 
 
 $(HAZARDS_BUILD)/Vqrisc32_hazards_tb: $(TB_DIR)/axi_checked_mem.sv $(RTL_SRC) $(HAZARDS_TB_DIR)/.stamp
 	mkdir -p $(HAZARDS_BUILD)
-	$(VERILATOR_ENV) verilator --cc --exe $(VERILATOR_CFLAGS) $(TB_DIR)/axi_checked_mem.sv $(RTL_SRC) $(HAZARDS_TB_DIR)/qrisc32_hazards_tb.sv --Mdir $(HAZARDS_BUILD) --threads $(VERILATOR_THREADS) --build $(HAZARDS_TB_DIR)/qrisc32_hazards_tb.cpp --top qrisc32_hazards_tb
+	$(VERILATOR_ENV) verilator --cc --exe $(VERILATOR_CFLAGS) -DQRISC32_SV_HAZARD_MONITOR $(TB_DIR)/axi_checked_mem.sv $(RTL_SRC) $(HAZARDS_TB_DIR)/qrisc32_hazards_tb.sv --Mdir $(HAZARDS_BUILD) --threads $(VERILATOR_THREADS) --build $(HAZARDS_TB_DIR)/qrisc32_hazards_tb.cpp --top qrisc32_hazards_tb
 
 hazards: $(HAZARDS_BUILD)/Vqrisc32_hazards_tb | $(VCD_DIR)
 	rm -f $(VCD_DIR)/hazards.vcd

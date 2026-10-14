@@ -81,12 +81,21 @@ def split_operands(text: str) -> list[str]:
             depth += 1
         elif ch == "]":
             depth -= 1
+            if depth < 0:
+                raise AsmError("unmatched closing bracket")
         elif ch == "," and depth == 0:
-            items.append(text[start:idx].strip())
+            item = text[start:idx].strip()
+            if not item:
+                raise AsmError("empty operand")
+            items.append(item)
             start = idx + 1
+    if depth:
+        raise AsmError("unmatched opening bracket")
     tail = text[start:].strip()
     if tail:
         items.append(tail)
+    elif items:
+        raise AsmError("trailing comma")
     return items
 
 
@@ -120,7 +129,11 @@ def load_lines(path: Path, seen: tuple[Path, ...] = ()) -> list[SourceLine]:
         chain = " -> ".join(str(p) for p in (*seen, path))
         raise AsmError(f"recursive include: {chain}")
     lines: list[SourceLine] = []
-    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+    try:
+        source = path.read_text()
+    except OSError as exc:
+        raise AsmError(f"cannot read {path}: {exc.strerror}") from exc
+    for lineno, raw in enumerate(source.splitlines(), 1):
         text = strip_comment(raw)
         if not text:
             continue
@@ -128,7 +141,10 @@ def load_lines(path: Path, seen: tuple[Path, ...] = ()) -> list[SourceLine]:
             match = re.fullmatch(r'\.include\s+"([^"]+)"', text, re.IGNORECASE)
             if not match:
                 raise AsmError(f"{path}:{lineno}: bad .include syntax")
-            lines.extend(load_lines(path.parent / match.group(1), (*seen, path)))
+            try:
+                lines.extend(load_lines(path.parent / match.group(1), (*seen, path)))
+            except AsmError as exc:
+                raise AsmError(f"{path}:{lineno}: {exc}") from exc
         else:
             lines.append(SourceLine(path, lineno, text))
     return lines
@@ -153,7 +169,7 @@ def extract_labels(lines: list[SourceLine]) -> tuple[dict[str, int], list[Source
                 break
         if text:
             items.append(SourceLine(line.path, line.lineno, text))
-            if not text.lower().startswith(".dmem"):
+            if text.split(None, 1)[0].lower() != ".dmem":
                 pc_words += 1
     return labels, items
 
@@ -162,7 +178,12 @@ def resolve_value(token: str, labels: dict[str, int]) -> int:
     token = token.strip()
     if token in labels:
         return labels[token]
-    return parse_int(token)
+    try:
+        return parse_int(token)
+    except ValueError as exc:
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", token):
+            raise AsmError(f"undefined label {token}") from exc
+        raise AsmError(f"invalid integer {token!r}") from exc
 
 
 def encode_item(line: SourceLine, labels: dict[str, int], pc_words: int, dmem: list[int]) -> int | None:
@@ -174,12 +195,17 @@ def encode_item(line: SourceLine, labels: dict[str, int], pc_words: int, dmem: l
         if mnemonic == ".WORD":
             if len(operands) != 1:
                 raise AsmError(".word takes exactly one operand")
-            return resolve_value(operands[0], labels)
+            value = resolve_value(operands[0], labels)
+            enc.check_word(".word", value, 32)
+            return value
 
         if mnemonic == ".DMEM":
             if not operands:
                 raise AsmError(".dmem takes at least one value")
-            dmem.extend(resolve_value(item, labels) & 0xFFFF_FFFF for item in operands)
+            values = [resolve_value(item, labels) for item in operands]
+            for value in values:
+                enc.check_word(".dmem", value, 32)
+            dmem.extend(value & 0xFFFF_FFFF for value in values)
             return None
 
         if mnemonic == "NOP":
@@ -241,7 +267,7 @@ def encode_item(line: SourceLine, labels: dict[str, int], pc_words: int, dmem: l
             if len(operands) != 1:
                 raise AsmError(f"{mnemonic} takes a target label/offset")
             target = operands[0].strip()
-            offset = labels[target] - (pc_words * 4) - 8 if target in labels else parse_int(target)
+            offset = labels[target] - (pc_words * 4) - 8 if target in labels else resolve_value(target, labels)
             return enc.jmp_flag(JMPF_OPS[mnemonic], offset)
 
         raise AsmError(f"unknown mnemonic {mnemonic}")

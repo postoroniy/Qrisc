@@ -58,35 +58,32 @@ module Qrisc32ID(
     logic use_src_r1;
     logic use_src_r2;
     logic use_dst_r;
-    logic use_flags;
-    logic[3:0] bubble_counter;
+    logic raw_hazard_stall;
+    logic load_hazard_stall;
 
     function automatic logic[31:0] forwarded_value(
         input logic[4:0] reg_idx,
         input logic[31:0] rf_value
     );
         begin
-            if(pipe_fwd_mem.write_reg && pipe_fwd_mem.dst_r==reg_idx)
-                forwarded_value = pipe_fwd_mem.val_dst;
-            else if(pipe_fwd_ex.write_reg && pipe_fwd_ex.dst_r==reg_idx)
+            if(pipe_fwd_ex.write_reg && !pipe_fwd_ex.read_mem && pipe_fwd_ex.dst_r==reg_idx)
                 forwarded_value = pipe_fwd_ex.val_dst;
             else if(pipe_fwd_ex.incr_r2_enable && pipe_fwd_ex.src_r2==reg_idx)
                 forwarded_value = pipe_fwd_ex.val_r2;
-            else if(pipe_wb_mem.write_reg && pipe_wb_mem.dst_r==reg_idx)
-                forwarded_value = pipe_wb_mem.val_dst;
+            else if(pipe_fwd_mem.write_reg && pipe_fwd_mem.dst_r==reg_idx)
+                forwarded_value = pipe_fwd_mem.val_dst;
+            else if(pipe_fwd_mem.incr_r2_enable && pipe_fwd_mem.src_r2==reg_idx)
+                forwarded_value = pipe_fwd_mem.val_r2;
             else if(pipe_wb_ex.write_reg && pipe_wb_ex.dst_r==reg_idx)
                 forwarded_value = pipe_wb_ex.val_dst;
             else if(pipe_wb_ex.incr_r2_enable && pipe_wb_ex.src_r2==reg_idx)
                 forwarded_value = pipe_wb_ex.val_r2;
+            else if(pipe_wb_mem.write_reg && pipe_wb_mem.dst_r==reg_idx)
+                forwarded_value = pipe_wb_mem.val_dst;
+            else if(pipe_wb_mem.incr_r2_enable && pipe_wb_mem.src_r2==reg_idx)
+                forwarded_value = pipe_wb_mem.val_r2;
             else
                 forwarded_value = rf_value;
-        end
-    endfunction
-
-    function automatic logic pipe_writes_flags(input Qrisc_pack::pipe_struct_t p);
-        begin
-            pipe_writes_flags = p.and_op | p.or_op | p.xor_op | p.add_op |
-                                p.mul_op | p.shl_op | p.shr_op | p.cmp_op;
         end
     endfunction
 
@@ -107,7 +104,10 @@ module Qrisc32ID(
     endfunction
 
     function automatic logic pipe_reg_hazard(
-        input Qrisc_pack::pipe_struct_t p,
+        input logic producer_write_reg,
+        input logic[4:0] producer_dst_r,
+        input logic producer_incr_r2_enable,
+        input logic[4:0] producer_src_r2,
         input logic use1,
         input logic[4:0] reg1,
         input logic use2,
@@ -117,8 +117,8 @@ module Qrisc32ID(
     );
         begin
             pipe_reg_hazard =
-                (p.write_reg && reads_reg(p.dst_r, use1, reg1, use2, reg2, used, regd)) ||
-                (p.incr_r2_enable && reads_reg(p.src_r2, use1, reg1, use2, reg2, used, regd));
+                (producer_write_reg && reads_reg(producer_dst_r, use1, reg1, use2, reg2, used, regd)) ||
+                (producer_incr_r2_enable && reads_reg(producer_src_r2, use1, reg1, use2, reg2, used, regd));
         end
     endfunction
 
@@ -163,7 +163,6 @@ module Qrisc32ID(
         use_src_r1 = 1'b0;
         use_src_r2 = 1'b0;
         use_dst_r  = 1'b0;
-        use_flags  = 1'b0;
 
         offset_w = (instruction[25])?pipe_id_out_w.val_r2:{{17{instruction[24]}},instruction[24:10]};//17 bit sign + 15 bit offset
 
@@ -266,7 +265,6 @@ module Qrisc32ID(
             unique case(flag_mode)
                 Qrisc_pack::FLAG_Z:begin
                 //jmpz
-                    use_flags                  = 1'b1;
                     use_src_r2                 = instruction[25];
                     pipe_id_out_w.val_r1        = pc;
                     pipe_id_out_w.val_r2        = offset_w;//offset
@@ -275,7 +273,6 @@ module Qrisc32ID(
                 end
                 Qrisc_pack::FLAG_NZ:begin
                 //jmpnz
-                    use_flags                  = 1'b1;
                     use_src_r2                 = instruction[25];
                     pipe_id_out_w.val_r1        = pc;
                     pipe_id_out_w.val_r2        = offset_w;//offset
@@ -284,7 +281,6 @@ module Qrisc32ID(
                 end
                 Qrisc_pack::FLAG_C:begin
                 //jmpc
-                    use_flags                  = 1'b1;
                     use_src_r2                 = instruction[25];
                     pipe_id_out_w.val_r1        = pc;
                     pipe_id_out_w.val_r2        = offset_w;//offset
@@ -293,7 +289,6 @@ module Qrisc32ID(
                 end
                 Qrisc_pack::FLAG_NC:begin
                 //jmpnc
-                    use_flags                  = 1'b1;
                     use_src_r2                 = instruction[25];
                     pipe_id_out_w.val_r1        = pc;
                     pipe_id_out_w.val_r2        = offset_w;//offset
@@ -361,7 +356,6 @@ module Qrisc32ID(
                 //ldrz
                     use_src_r1 = 1'b1;
                     use_src_r2 = 1'b1;
-                    use_flags  = 1'b1;
                     pipe_id_out_w.jmpz      = 1;
                     pipe_id_out_w.ldrf_op   = 1;
                     pipe_id_out_w.write_reg = 1;
@@ -370,7 +364,6 @@ module Qrisc32ID(
                 //ldrnz
                     use_src_r1 = 1'b1;
                     use_src_r2 = 1'b1;
-                    use_flags  = 1'b1;
                     pipe_id_out_w.jmpnz     = 1;
                     pipe_id_out_w.ldrf_op   = 1;
                     pipe_id_out_w.write_reg = 1;
@@ -379,7 +372,6 @@ module Qrisc32ID(
                 //ldrc
                     use_src_r1 = 1'b1;
                     use_src_r2 = 1'b1;
-                    use_flags  = 1'b1;
                     pipe_id_out_w.ldrf_op   = 1;
                     pipe_id_out_w.jmpc      = 1;
                     pipe_id_out_w.write_reg = 1;
@@ -388,7 +380,6 @@ module Qrisc32ID(
                 //ldrnc
                     use_src_r1 = 1'b1;
                     use_src_r2 = 1'b1;
-                    use_flags  = 1'b1;
                     pipe_id_out_w.ldrf_op   = 1;
                     pipe_id_out_w.jmpnc     = 1;
                     pipe_id_out_w.write_reg = 1;
@@ -400,7 +391,28 @@ module Qrisc32ID(
                 end
         endcase
 
-        hazard_stall = bubble_counter != 0;
+        raw_hazard_stall = pipe_reg_hazard(
+            pipe_id_out.write_reg,
+            pipe_id_out.dst_r,
+            pipe_id_out.incr_r2_enable,
+            pipe_id_out.src_r2,
+            use_src_r1,
+            pipe_id_out_w.src_r1,
+            use_src_r2,
+            pipe_id_out_w.src_r2,
+            use_dst_r,
+            pipe_id_out_w.dst_r
+        );
+        load_hazard_stall = mem_load_pending && reads_reg(
+            mem_load_dst,
+            use_src_r1,
+            pipe_id_out_w.src_r1,
+            use_src_r2,
+            pipe_id_out_w.src_r2,
+            use_dst_r,
+            pipe_id_out_w.dst_r
+        );
+        hazard_stall = !branch_flush && (raw_hazard_stall || load_hazard_stall);
     end
 
     always_ff@(posedge clk or posedge areset)
@@ -410,7 +422,6 @@ module Qrisc32ID(
         jmp_counter<='0;
         alu_counter<='0;
         oth_counter<='0;
-        bubble_counter<='0;
     end else begin
         if(instruction==0)
             nop_counter<=nop_counter+1;
@@ -425,14 +436,8 @@ module Qrisc32ID(
             pipe_id_out <= pipe_id_out;
         end else if(branch_flush || hazard_stall) begin
             pipe_id_out <= '0;
-            if(branch_flush)
-                bubble_counter <= 4'd6;
-            else if(bubble_counter != 0)
-                bubble_counter <= bubble_counter - 1'b1;
         end else begin
             pipe_id_out<=pipe_id_out_w;
-            if(instruction != '0)
-                bubble_counter <= 4'd6;
         end
 
 // synthesis translate_off

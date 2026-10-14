@@ -1,18 +1,32 @@
 # qrisc32 Shared Test Vectors
 
-These hex files are the canonical smoke programs used by every implemented
+These hex files are the reference programs used by every implemented
 qrisc32 language version.  Words are 32-bit instructions, one word per line,
 loaded at instruction memory word address zero.
 
 `vectors.json` is the machine-readable manifest for these programs.  Each entry
 names the vector, the hex file to load, any optional data-memory init file, the
-expected `dmem` words, and the expected PASS line.  New language ports should use
-that manifest as their source of truth.
+expected `dmem` words, and the expected PASS line. New implementations should
+read this manifest directly.
+
+`toolchain_programs.json` defines generated assembler and tiny-C cases. The
+generator writes their instruction/data images to ignored `build/toolchain/`;
+`make binary-compat` loads those same bytes on every RTL implementation and checks the
+listed memory words after terminal completion. `asm_hazards` assembles this
+directory's `hazards.s`; `asm_control_flush` checks two taken-branch wrong-path
+stores and a not-taken branch. `c_signed` checks signed comparisons, arithmetic
+right shifts, loop state, break/continue, and arrays.
+
+The same manifest expands each tiny-C sort into reversed, mixed, and sorted
+data-memory cases. The compiler produces one instruction image per algorithm;
+the generator produces case-specific data images and derives expected results
+by sorting the ten input integers. `make sort-binary-compat` runs all nine cases
+on every RTL implementation.
 
 ## smoke.hex
 
-Program: the original optimized qrisc32 bubble-sort smoke program from
-`SystemVerilog/tb/Qrisc32Tb.sv`.
+Program: a compact bubble-sort binary generated from
+`examples/c/bubble_sort.c` by `qrisc32-cc`.
 
 Initial data memory comes from `smoke_reversed.hex`:
 
@@ -22,12 +36,12 @@ Initial data memory comes from `smoke_reversed.hex`:
 
 Expected result: `dmem[0..9] = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10`.
 
-The original SystemVerilog smoke bench also runs the historical modified-shell
-and first-shell sort loaders from `Qrisc32Tb.sv` against reverse, random, and
-already-sorted input data.  The generated `smoke_shell_mdf.hex` and
-`smoke_shell_first.hex` files are kept for that compatibility work, but the
-portable manifest smoke vector uses the bubble-sort binary.  There is no
-quick-sort loader in the current `Qrisc32Tb.sv` source.
+Normal toolchain generation verifies this tracked image byte-for-byte against
+fresh compact compiler output. `make update-smoke-golden` is the explicit path
+for an intentional, reviewed compiler-output update. The historical optimized
+loaders and their broken hand-encoded hex files have been removed; their cycle
+figures are archival and are not acceptance criteria for the generated sorts.
+Quick sort is not included in the current sort tests.
 
 ## axi_smoke.hex
 
@@ -65,7 +79,7 @@ sequential fetch from reading outside the shared vector file.
 
 ## isa.hex
 
-This directed parity program exercises ISA behavior not covered by the shorter
+This directed program exercises ISA behavior not covered by the shorter
 smoke programs:
 
 1. ADD, SHL, SHR, and MUL results with carry observed through `LDRC/LDRNC`.

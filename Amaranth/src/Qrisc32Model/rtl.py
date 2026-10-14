@@ -419,13 +419,11 @@ class Qrisc32(Elaboratable):
         if_state = Signal(1, name="if_state")
         if_fetch_pc = Signal(32, name="if_fetch_pc")
         if_hold_pc = Signal(32, name="if_hold_pc")
-        bubble_counter = Signal(4, name="id_bubble_counter")
         hazard_stall = Signal(name="id_hazard_stall")
         pc_if = if_hold_pc + 8
         new_address_valid = Signal(name="ex_new_address_valid")
         new_address = Signal(32, name="ex_new_address")
         pipe_stall = Signal(name="pipe_stall")
-        m.d.comb += hazard_stall.eq(bubble_counter != 0)
 
         inst = instruction
         dst = inst[0:5]
@@ -449,18 +447,22 @@ class Qrisc32(Elaboratable):
         def forwarded_value(reg_idx, name):
             value = Signal(32, name=name)
             m.d.comb += value.eq(rf[reg_idx])
-            with m.If(pipe_mem_out["write_reg"] & (pipe_mem_out["dst_r"] == reg_idx)):
-                m.d.comb += value.eq(pipe_mem_out["val_dst"])
-            with m.Elif(pipe_ex_out["write_reg"] & (pipe_ex_out["dst_r"] == reg_idx)):
+            with m.If(pipe_ex_out["write_reg"] & ~pipe_ex_out["read_mem"] & (pipe_ex_out["dst_r"] == reg_idx)):
                 m.d.comb += value.eq(pipe_ex_out["val_dst"])
             with m.Elif(pipe_ex_out["incr_r2_enable"] & (pipe_ex_out["src_r2"] == reg_idx)):
                 m.d.comb += value.eq(pipe_ex_out["val_r2"])
-            with m.Elif(pipe_wb_mem["write_reg"] & (pipe_wb_mem["dst_r"] == reg_idx)):
-                m.d.comb += value.eq(pipe_wb_mem["val_dst"])
+            with m.Elif(pipe_mem_out["write_reg"] & (pipe_mem_out["dst_r"] == reg_idx)):
+                m.d.comb += value.eq(pipe_mem_out["val_dst"])
+            with m.Elif(pipe_mem_out["incr_r2_enable"] & (pipe_mem_out["src_r2"] == reg_idx)):
+                m.d.comb += value.eq(pipe_mem_out["val_r2"])
             with m.Elif(pipe_wb_ex["write_reg"] & (pipe_wb_ex["dst_r"] == reg_idx)):
                 m.d.comb += value.eq(pipe_wb_ex["val_dst"])
             with m.Elif(pipe_wb_ex["incr_r2_enable"] & (pipe_wb_ex["src_r2"] == reg_idx)):
                 m.d.comb += value.eq(pipe_wb_ex["val_r2"])
+            with m.Elif(pipe_wb_mem["write_reg"] & (pipe_wb_mem["dst_r"] == reg_idx)):
+                m.d.comb += value.eq(pipe_wb_mem["val_dst"])
+            with m.Elif(pipe_wb_mem["incr_r2_enable"] & (pipe_wb_mem["src_r2"] == reg_idx)):
+                m.d.comb += value.eq(pipe_wb_mem["val_r2"])
             return value
 
         m.d.comb += pipe_zero(pipe_id_w)
@@ -615,6 +617,35 @@ class Qrisc32(Elaboratable):
                     with m.Default():
                         m.d.comb += pipe_id_w["jmpnc"].eq(1)
 
+        use_src1 = Signal(name="id_use_src1")
+        use_src2 = Signal(name="id_use_src2")
+        use_dst = Signal(name="id_use_dst")
+        m.d.comb += [
+            use_src1.eq((opcode == Opcode.ALU) | (opcode == Opcode.LDRF)
+                        | (opcode == Opcode.STR)
+                        | ((opcode == Opcode.LDR) & ((load_mode == LoadMode.REG) | (load_mode == LoadMode.MEM)))),
+            use_src2.eq((opcode == Opcode.ALU) | (opcode == Opcode.LDRF)
+                        | ((opcode == Opcode.LDR) & (load_mode == LoadMode.REG) & pipe_id_w["incr_r2_enable"])
+                        | (((opcode == Opcode.LDR) & (load_mode == LoadMode.MEM)) | (opcode == Opcode.STR)
+                           | ((opcode == Opcode.JMPUNC) & (jump_mode != JumpMode.ABS)) | (opcode == Opcode.JMPF)) & inst[25]),
+            use_dst.eq((opcode == Opcode.STR)
+                       | ((opcode == Opcode.LDR) & ((load_mode == LoadMode.HIGH) | (load_mode == LoadMode.LOW)))
+                       | ((opcode == Opcode.JMPUNC) & (jump_mode == JumpMode.RET))),
+        ]
+
+        def reads_reg(index):
+            return (use_src1 & (src1 == index)) | (use_src2 & (src2 == index)) | (use_dst & (dst == index))
+
+        ex_conflict = (pipe_id_out["write_reg"] & reads_reg(pipe_id_out["dst_r"])) | (
+            pipe_id_out["incr_r2_enable"] & reads_reg(pipe_id_out["src_r2"])
+        )
+        load_conflict = (
+            (pipe_ex_out["read_mem"] & reads_reg(pipe_ex_out["dst_r"]))
+            | (pipe_mem_in0["read_mem"] & reads_reg(pipe_mem_in0["dst_r"]))
+            | (pipe_mem_in1["read_mem"] & reads_reg(pipe_mem_in1["dst_r"]))
+        ) & ~(pipe_mem_out["write_reg"] & reads_reg(pipe_mem_out["dst_r"]))
+        m.d.comb += hazard_stall.eq((inst != 0) & ~new_address_valid & (ex_conflict | load_conflict))
+
         flag_z = Signal(name="ex_flag_z")
         flag_c = Signal(name="ex_flag_c")
         flag_z_w = Signal(name="ex_flag_z_w")
@@ -736,7 +767,6 @@ class Qrisc32(Elaboratable):
                 if_state.eq(if_fetch),
                 if_fetch_pc.eq(0),
                 if_hold_pc.eq(0),
-                bubble_counter.eq(0),
                 flag_z.eq(0),
                 flag_c.eq(0),
             ]
@@ -777,14 +807,8 @@ class Qrisc32(Elaboratable):
             with m.If(~pipe_stall):
                 with m.If(new_address_valid | hazard_stall):
                     m.d.sync += pipe_zero(pipe_id_out)
-                    with m.If(new_address_valid):
-                        m.d.sync += bubble_counter.eq(6)
-                    with m.Elif(bubble_counter != 0):
-                        m.d.sync += bubble_counter.eq(bubble_counter - 1)
                 with m.Else():
                     m.d.sync += pipe_eq(pipe_id_out, pipe_id_w)
-                    with m.If(instruction != 0):
-                        m.d.sync += bubble_counter.eq(6)
 
             with m.If(pipe_wb_ex["write_reg"]):
                 m.d.sync += rf[pipe_wb_ex["dst_r"]].eq(pipe_wb_ex["val_dst"])

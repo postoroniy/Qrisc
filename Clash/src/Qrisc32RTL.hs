@@ -104,6 +104,37 @@ data Pending
   | StorePending Bool RegIdx U32 U32
   deriving (Generic, NFDataX)
 
+data InstSlot = InstSlot
+  { slotPc :: U32
+  , slotInst :: U32
+  }
+  deriving (Generic, NFDataX)
+
+data WbSlot = WbSlot
+  { wInst :: U32
+  , wWriteReg :: Bool
+  , wDst :: RegIdx
+  , wValue :: U32
+  , wIncEn :: Bool
+  , wIncReg :: RegIdx
+  , wIncValue :: U32
+  , wFlagsWrite :: Bool
+  , wFlagZ :: Bool
+  , wFlagC :: Bool
+  }
+  deriving (Generic, NFDataX)
+
+data MemSlot = MemSlot
+  { mInst :: U32
+  , mPhase :: Phase
+  , mAddr :: U32
+  , mWData :: U32
+  , mPending :: Pending
+  , mNextPc :: U32
+  , mWb :: WbSlot
+  }
+  deriving (Generic, NFDataX)
+
 newtype OpcodeBits = OpcodeBits (BitVector 4)
 newtype ModeBits = ModeBits (BitVector 2)
 newtype AluBits = AluBits (BitVector 3)
@@ -170,6 +201,15 @@ data CpuState = CpuState
   , regs :: Vec 32 U32
   , flagZ :: Bool
   , flagC :: Bool
+  , fetchPc :: U32
+  , fetchReqPc :: U32
+  , fetchWaiting :: Bool
+  , fetchDiscard :: Bool
+  , fetchSlot :: Maybe InstSlot
+  , idSlot :: Maybe InstSlot
+  , memSlot :: Maybe MemSlot
+  , wbSlot :: Maybe WbSlot
+  , controlPending :: Bool
   , phase :: Phase
   , instReg :: U32
   , memAddr :: U32
@@ -195,6 +235,15 @@ initialState =
     , regs = repeat 0
     , flagZ = False
     , flagC = False
+    , fetchPc = 0
+    , fetchReqPc = 0
+    , fetchWaiting = False
+    , fetchDiscard = False
+    , fetchSlot = Nothing
+    , idSlot = Nothing
+    , memSlot = Nothing
+    , wbSlot = Nothing
+    , controlPending = False
     , phase = FetchAddr
     , instReg = 0
     , memAddr = 0
@@ -549,55 +598,203 @@ commitStore s@CpuState{..} =
       queueWb s pc False 0 0 incEn incReg incBase incDelta False False False
     _ -> s { phase = FetchAddr, pending = NoPending }
 
+wbFromExec :: U32 -> CpuState -> WbSlot
+wbFromExec raw r =
+  WbSlot raw (wbWriteReg r) (wbDst r) (wbValue r) (wbIncEn r)
+    (wbIncReg r) (wbIncValue r) (wbFlagsWrite r) (wbFlagZ r) (wbFlagC r)
+
+memFromExec :: U32 -> CpuState -> MemSlot
+memFromExec raw r =
+  MemSlot raw (phase r) (memAddr r) (memWData r) (pending r)
+    (pc r) (wbFromExec raw r)
+
+commitSlot :: CpuState -> WbSlot -> CpuState
+commitSlot s WbSlot{..} =
+  let regsWritten = if wWriteReg then writeReg wDst wValue (regs s) else regs s
+      regsFinal = if wIncEn then writeReg wIncReg wIncValue regsWritten else regsWritten
+  in s { regs = regsFinal
+       , flagZ = if wFlagsWrite then wFlagZ else flagZ s
+       , flagC = if wFlagsWrite then wFlagC else flagC s
+       }
+
+memResult :: MemSlot -> Maybe U32 -> WbSlot
+memResult MemSlot{..} readValue =
+  case mPending of
+    LoadPending dst incEn incReg incBase incDelta ->
+      WbSlot mInst True dst (maybe 0 id readValue) incEn incReg
+        (incBase + incDelta) False False False
+    StorePending incEn incReg incBase incDelta ->
+      WbSlot mInst False 0 0 incEn incReg (incBase + incDelta) False False False
+    NoPending -> mWb
+
+runMem :: CpuState -> AxiInputs -> (Maybe MemSlot, Maybe WbSlot, AxiOutputs)
+runMem CpuState{..} i =
+  case memSlot of
+    Nothing -> (Nothing, Nothing, idleOutputs)
+    Just m@MemSlot{..} ->
+      case mPhase of
+        WriteBack -> (Nothing, Just mWb, idleOutputs)
+        DataReadAddr ->
+          let out = idleOutputs { axi_data_araddr = mAddr, axi_data_arvalid = 1 }
+              next = if bitSet (dArReady i) then m { mPhase = DataReadResp } else m
+          in (Just next, Nothing, out)
+        DataReadResp ->
+          if bitSet (dRValid i)
+            then (Nothing, Just (memResult m (Just (dRData i))), idleOutputs)
+            else (Just m, Nothing, idleOutputs)
+        DataWriteAddrData awDone wDone ->
+          let awValid = not awDone
+              wValid = not wDone
+              awDone' = awDone || (awValid && bitSet (dAwReady i))
+              wDone' = wDone || (wValid && bitSet (dWReady i))
+              out = idleOutputs
+                { axi_data_awaddr = mAddr
+                , axi_data_awvalid = if awValid then 1 else 0
+                , axi_data_wdata = mWData
+                , axi_data_wvalid = if wValid then 1 else 0
+                }
+              next = m { mPhase = if awDone' && wDone'
+                                     then DataWriteResp
+                                     else DataWriteAddrData awDone' wDone' }
+          in if awDone' && wDone' && bitSet (dBValid i)
+               then (Nothing, Just (memResult m Nothing), out)
+               else (Just next, Nothing, out)
+        DataWriteResp ->
+          if bitSet (dBValid i)
+            then (Nothing, Just (memResult m Nothing), idleOutputs)
+            else (Just m, Nothing, idleOutputs)
+        _ -> (Just m, Nothing, idleOutputs)
+
+type RegMask = Vec 32 Bool
+
+emptyMask :: RegMask
+emptyMask = repeat False
+
+regMask :: RegIdx -> RegMask
+regMask idx = replace idx True emptyMask
+
+unionMask :: RegMask -> RegMask -> RegMask
+unionMask = zipWith (||)
+
+overlaps :: RegMask -> RegMask -> Bool
+overlaps a b = foldr (||) False (zipWith (&&) a b)
+
+instructionMasks :: U32 -> (RegMask, RegMask, Bool, Bool, Bool)
+instructionMasks inst =
+  let op = opcodeOf (OpcodeBits (slice d31 d28 inst :: BitVector 4))
+      loadMode = loadModeOf (ModeBits (slice d27 d26 inst :: BitVector 2))
+      jumpMode = jumpModeOf (ModeBits (slice d27 d26 inst :: BitVector 2))
+      aluOp = aluOpOf (AluBits (slice d27 d25 inst :: BitVector 3))
+      incMode = incrModeOf (IncrBits (slice d24 d22 inst :: BitVector 3))
+      src1 = src1Idx inst
+      src2 = src2Idx inst
+      dst = dstIdx inst
+      regOffset = inst ! (25 :: Int) == 1
+      defaultInc = incrEnabled incMode
+      incEn = case op of
+        OpLdr -> case loadMode of
+          LoadReg -> defaultInc
+          LoadMem -> regOffset
+          _ -> False
+        OpStr -> regOffset
+        OpJmpUnc -> jumpMode /= JumpAbs && regOffset
+        OpJmpF -> regOffset
+        OpAlu -> defaultInc
+        OpLdrF -> defaultInc
+        _ -> False
+      read1 = op == OpAlu || op == OpLdrF || op == OpStr
+        || (op == OpLdr && (loadMode == LoadReg || loadMode == LoadMem))
+      read2 = op == OpAlu || op == OpLdrF
+        || (op == OpLdr && loadMode == LoadReg && incEn)
+        || (regOffset && (op == OpStr || (op == OpLdr && loadMode == LoadMem)
+            || (op == OpJmpUnc && jumpMode /= JumpAbs) || op == OpJmpF))
+      readDst = op == OpStr || (op == OpLdr && (loadMode == LoadHigh || loadMode == LoadLow))
+        || (op == OpJmpUnc && jumpMode == JumpRet)
+      writeDst = case op of
+        OpLdr -> loadMode /= LoadReg || dst /= src1
+        OpAlu -> aluOp /= AluCmp
+        OpLdrF -> True
+        OpJmpUnc -> jumpMode == JumpCall
+        _ -> False
+      readMask = (if read1 then regMask src1 else emptyMask)
+        `unionMask` (if read2 then regMask src2 else emptyMask)
+        `unionMask` (if readDst then regMask dst else emptyMask)
+      writeMask = (if writeDst then regMask dst else emptyMask)
+        `unionMask` (if incEn then regMask src2 else emptyMask)
+  in (readMask, writeMask, op == OpJmpF || op == OpLdrF, op == OpAlu,
+      op == OpJmpUnc || op == OpJmpF)
+
+execNextPc :: CpuState -> U32
+execNextPc = wbNextPc
+
 step :: CpuState -> AxiInputs -> (CpuState, AxiOutputs)
 step s@CpuState{..} i =
-  case phase of
-    FetchAddr ->
-      let out = idleOutputs { axi_instruction_araddr = pc, axi_instruction_arvalid = 1 }
-          s' = if bitSet (iArReady i) then s { phase = FetchResp } else s
-      in (s', out)
-    FetchResp ->
-      let s' = if bitSet (iRValid i) then s { instReg = iRData i, phase = Decode } else s
-      in (s', idleOutputs)
-    Decode ->
-      (s { phase = Execute }, idleOutputs)
-    Execute ->
-      let s' = decodeExecute s instReg
-      in (s', idleOutputs)
-    DataReadAddr ->
-      let out = idleOutputs { axi_data_araddr = memAddr, axi_data_arvalid = 1 }
-          s' = if bitSet (dArReady i) then s { phase = DataReadResp } else s
-      in (s', out)
-    DataReadResp ->
-      let s' = if bitSet (dRValid i) then commitLoad s (dRData i) else s
-      in (s', idleOutputs)
-    DataWriteAddrData awDone wDone ->
-      let awValid = not awDone
-          wValid = not wDone
-          awFire = awValid && bitSet (dAwReady i)
-          wFire = wValid && bitSet (dWReady i)
-          awDone' = awDone || awFire
-          wDone' = wDone || wFire
-          out = idleOutputs
-            { axi_data_awaddr = memAddr
-            , axi_data_awvalid = if awValid then 1 else 0
-            , axi_data_wdata = memWData
-            , axi_data_wvalid = if wValid then 1 else 0
-            }
-          sWait =
-            if awDone' && wDone'
-              then s { phase = DataWriteResp }
-              else s { phase = DataWriteAddrData awDone' wDone' }
-          s' =
-            if awDone' && wDone' && bitSet (dBValid i)
-              then commitStore s
-              else sWait
-      in (s', out)
-    DataWriteResp ->
-      let s' = if bitSet (dBValid i) then commitStore s else s
-      in (s', idleOutputs)
-    WriteBack ->
-      (commitWb s, idleOutputs)
+  let committed = maybe s (commitSlot s) wbSlot
+      (memAfter, wbAfter, dataOut) = runMem s i
+      canExecute = case (idSlot, memAfter) of
+        (Just _, Nothing) -> True
+        _ -> False
+      executed = case idSlot of
+        Just slot | canExecute -> Just (decodeExecute (committed { pc = slotPc slot }) (slotInst slot))
+        _ -> Nothing
+      memAfterEx = case executed of
+        Just result -> case idSlot of
+          Just slot -> Just (memFromExec (slotInst slot) result)
+          Nothing -> memAfter
+        Nothing -> memAfter
+      idAfterEx = if canExecute then Nothing else idSlot
+      branchResolved = case idSlot of
+        Just slot | canExecute -> let (_, _, _, _, ctrl) = instructionMasks (slotInst slot) in ctrl
+        _ -> False
+      redirect = case (idSlot, executed) of
+        (Just slot, Just result) ->
+          let op = opcodeOf (OpcodeBits (slice d31 d28 (slotInst slot) :: BitVector 4))
+          in op == OpJmpUnc || (op == OpJmpF && execNextPc result /= slotPc slot + 4)
+        _ -> False
+      redirectPc = maybe fetchPc execNextPc executed
+      controlAfterEx = controlPending && not branchResolved
+      busyInst = case memAfterEx of
+        Just m -> mInst m
+        Nothing -> 0
+      (_, busyWrites, _, busyFlags, _) = instructionMasks busyInst
+      (idAfter, fetchedAfterId, controlAfterId) =
+        case (idAfterEx, fetchSlot) of
+          (Nothing, Just slot) | not controlPending && not redirect ->
+            let (readMask, writeMask, usesFlags, _, control) = instructionMasks (slotInst slot)
+            in if not (overlaps (readMask `unionMask` writeMask) busyWrites)
+                  && not (usesFlags && busyFlags)
+                 then (Just slot, Nothing, control)
+                 else (Nothing, fetchSlot, controlAfterEx)
+          _ -> (idAfterEx, fetchSlot, controlAfterEx)
+      received = fetchWaiting && bitSet (iRValid i)
+      fetchedAfterResp =
+        if received && not fetchDiscard && not redirect
+          then Just (InstSlot fetchReqPc (iRData i))
+          else fetchedAfterId
+      waitingAfterResp = fetchWaiting && not received
+      discardAfterResp = fetchDiscard && not received
+      fetchBufferEmpty = case fetchedAfterResp of
+        Nothing -> True
+        Just _ -> False
+      canRequest = not waitingAfterResp && fetchBufferEmpty
+        && not controlAfterId && not redirect
+      instOut = dataOut
+        { axi_instruction_araddr = fetchPc
+        , axi_instruction_arvalid = if canRequest then 1 else 0
+        }
+      issued = canRequest && bitSet (iArReady i)
+      next = committed
+        { fetchPc = if redirect then redirectPc else if issued then fetchPc + 4 else fetchPc
+        , fetchReqPc = if issued then fetchPc else fetchReqPc
+        , fetchWaiting = if redirect then waitingAfterResp else waitingAfterResp || issued
+        , fetchDiscard = if redirect then waitingAfterResp else discardAfterResp
+        , fetchSlot = if redirect then Nothing else fetchedAfterResp
+        , idSlot = idAfter
+        , memSlot = memAfterEx
+        , wbSlot = wbAfter
+        , controlPending = controlAfterId
+        }
+  in (next, instOut)
 
 {-# ANN topEntity
   (Synthesize

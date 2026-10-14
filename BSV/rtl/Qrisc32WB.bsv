@@ -24,6 +24,8 @@ import RWire::*;
 module qrisc32_WB#(
         FIFOF#(Pipe_s) wbExFifo,
         FIFOF#(Pipe_s) wbMemFifo,
+        FIFOF#(Pipe_s) retiredExFifo,
+        FIFOF#(Pipe_s) retiredMemFifo,
         RF_IFC rf
     ) (WB_IFC);
 
@@ -33,7 +35,8 @@ module qrisc32_WB#(
     RWire#(Pipe_s) wb_ex_bypass  <- mkRWire;
     RWire#(Pipe_s) wb_mem_bypass <- mkRWire;
 
-    rule writeback(wbExFifo.notEmpty || wbMemFifo.notEmpty);
+    rule writeback((wbExFifo.notEmpty || wbMemFifo.notEmpty)
+                   && retiredExFifo.notFull && retiredMemFifo.notFull);
         Bool have_ex = wbExFifo.notEmpty;
         Bool have_mem = wbMemFifo.notEmpty;
 
@@ -43,6 +46,7 @@ module qrisc32_WB#(
         if (have_ex) begin
             ex = wbExFifo.first;
             wbExFifo.deq;
+            retiredExFifo.enq(ex);
             wb_ex_reg <= ex;
             wb_ex_bypass.wset(ex);
         end
@@ -50,6 +54,7 @@ module qrisc32_WB#(
         if (have_mem) begin
             mem = wbMemFifo.first;
             wbMemFifo.deq;
+            retiredMemFifo.enq(mem);
             wb_mem_reg <= mem;
             wb_mem_bypass.wset(mem);
         end

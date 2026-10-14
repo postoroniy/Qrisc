@@ -1,15 +1,16 @@
 # qrisc32 in Amaranth
 
-Status: five-stage Amaranth RTL plus a pytest architectural model. The generated
-Verilog is checked against the shared flags, ISA, and AXI smoke benches, and the
-Amaranth smoke target uses the same original sort bench as SystemVerilog.
+This directory contains five-stage Amaranth RTL and a pytest architectural
+model. The generated Verilog runs the shared flags, ISA, AXI, hazards, and sort
+tests.
 
-The SystemVerilog implementation is the canonical qrisc32 behavior.  Amaranth
-work consumes `../tests/vectors.json` and reproduces the same architectural
+The SystemVerilog implementation defines the qrisc32 behavior. Amaranth
+consumes `../tests/vectors.json` and reproduces the same architectural
 results with generated Verilog checked by the existing SystemVerilog Verilator
 benches. The RTL has explicit IF, ID, EX, MEM, and WB stage state, with RF
-commits driven from registered WB sources. The Python model remains as a pytest
-diagnostic reference.
+commits driven from registered WB sources. The Python model provides a separate
+pytest check. The decoder uses dependency-specific stalls and EX/MEM/WB
+forwarding rather than a fixed post-instruction bubble.
 
 Source layout:
 
@@ -28,7 +29,7 @@ Equivalent local checks from this directory:
 
 ```sh
 make venv
-make smoke flags isa axi
+make smoke flags isa axi hazards
 make test
 make verilog
 make synth

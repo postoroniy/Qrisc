@@ -159,13 +159,13 @@ class Qrisc32Model:
                 prod = r1 * r2
                 write_reg = True
                 write_value = u32(prod)
-                self.flag_c = False
+                self.flag_c = bool(prod & (1 << 32))
                 self.flag_z = write_value == 0
             elif alu == AluOp.SHL:
                 shl = (r1 << (r2 & 0x1F)) & ((1 << 33) - 1)
                 write_reg = True
                 write_value = u32(shl)
-                self.flag_c = False
+                self.flag_c = bool(shl & (1 << 32))
                 self.flag_z = write_value == 0
             elif alu == AluOp.SHR:
                 shift = r2 & 0x1F

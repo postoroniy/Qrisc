@@ -1,0 +1,53 @@
+// qrisc32 binary ISA encodings, aligned with SystemVerilog/rtl/Qrisc_pack.sv.
+enum Opcode : bits<4> {
+    Load = 0
+    Store = 1
+    Jump = 2
+    JumpFlag = 3
+    Alu = 4
+    LoadFlag = 5
+    Invalid = 15
+}
+
+enum LoadMode : bits<2> {
+    Register = 0
+    High = 1
+    Low = 2
+    Memory = 3
+}
+
+enum JumpMode : bits<2> {
+    Absolute = 0
+    Relative = 1
+    Call = 2
+    Return = 3
+}
+
+enum FlagMode : bits<2> {
+    Zero = 0
+    NotZero = 1
+    Carry = 2
+    NotCarry = 3
+}
+
+enum AluOp : bits<3> {
+    And = 0
+    Or = 1
+    Xor = 2
+    Add = 3
+    Mul = 4
+    ShiftLeft = 5
+    ShiftRight = 6
+    Compare = 7
+}
+
+enum IncrMode : bits<3> {
+    None = 0
+    One = 1
+    Two = 2
+    Four = 3
+    NoneAlt = 4
+    MinusOne = 5
+    MinusTwo = 6
+    MinusFour = 7
+}

@@ -5,3 +5,6 @@ lint_off -rule UNUSEDSIGNAL -file "*qrisc32.v"
 lint_off -rule SYNCASYNCNET -file "*qrisc32.v"
 lint_off -rule UNUSEDSIGNAL -file "*mkQrisc32.v"
 lint_off -rule SYNCASYNCNET -file "*mkQrisc32.v"
+// Bluespec's installed single-entry FIFO has an odd-width debug initializer.
+lint_off -rule WIDTHTRUNC -file "*/bsc/inst/lib/Verilog/FIFO1.v"
+lint_off -rule UNUSEDSIGNAL -file "*/bsc/inst/lib/Verilog/FIFO1.v"

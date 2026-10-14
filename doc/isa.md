@@ -1,6 +1,6 @@
 # qrisc32 ISA Notes
 
-The SystemVerilog implementation is the canonical ISA source for this repo.
+The SystemVerilog implementation defines the ISA behavior for this repository.
 These notes document the subset currently exercised by the shared smoke and
 flags programs in `../tests/`.
 

@@ -26,13 +26,20 @@ def check_reg(reg: int) -> None:
     check_range("register", reg, 5)
 
 
+def check_word(name: str, value: int, bits: int) -> None:
+    if not -(1 << (bits - 1)) <= value <= (1 << bits) - 1:
+        raise ValueError(f"{name}={value} does not fit in {bits} bits")
+
+
 def ldrh(imm: int, dst: int) -> int:
     check_reg(dst)
+    check_word("immediate", imm, 16)
     return (LDR << 28) | (LoadMode.HIGH << 26) | (mask(imm, 16) << 5) | dst
 
 
 def ldrl(imm: int, dst: int) -> int:
     check_reg(dst)
+    check_word("immediate", imm, 16)
     return (LDR << 28) | (LoadMode.LOW << 26) | (mask(imm, 16) << 5) | dst
 
 
@@ -81,20 +88,27 @@ def ldrf(mode: int, inc: int, src2: int, src1: int, dst: int) -> int:
 
 def jmp_abs(addr: int) -> int:
     check_range("address", addr, 26)
+    if addr & 3:
+        raise ValueError(f"address={addr} is not word-aligned")
     return (JMPUNC << 28) | (JMP << 26) | mask(addr, 26)
 
 
 def jmp_flag(mode: int, off15: int) -> int:
     check_range("mode", mode, 2)
     check_range("offset", off15, 15, signed=True)
+    if off15 & 3:
+        raise ValueError(f"offset={off15} is not word-aligned")
     return (JMPF << 28) | (mode << 26) | (OFFSET_CODE << 25) | (mask(off15, 15) << 10)
 
 
 def load_imm_words(dst: int, value: int) -> list[int]:
+    check_word("value", value, 32)
     value = mask(value, 32)
     return [ldrh((value >> 16) & 0xFFFF, dst), ldrl(value & 0xFFFF, dst)]
 
 
 def write_hex(path: Path, words: list[int]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{word & 0xFFFF_FFFF:08x}\n" for word in words))
+    content = "".join(f"{word & 0xFFFF_FFFF:08x}\n" for word in words)
+    if not path.exists() or path.read_text() != content:
+        path.write_text(content)

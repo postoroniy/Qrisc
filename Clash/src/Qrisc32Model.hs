@@ -187,9 +187,9 @@ execAlu alu dst _src2 incr incTarget r1 r2 cpu =
             value = u32 result
         in inc $ write value cpu { flagC = result > mask32, flagZ = value == 0 }
       AluMul ->
-        let product = r1 * r2
-            value = u32 product
-        in inc $ write value cpu { flagC = testBit product 32, flagZ = value == 0 }
+        let mulProduct = r1 * r2
+            value = u32 mulProduct
+        in inc $ write value cpu { flagC = testBit mulProduct 32, flagZ = value == 0 }
       AluShl ->
         let shifted = r1 `shiftL` (r2 .&. 31)
             value = u32 shifted

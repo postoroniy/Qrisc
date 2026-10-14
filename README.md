@@ -1,22 +1,26 @@
 # Qrisc
 
-Qrisc32 is a small 32-bit RISC CPU kept in multiple hardware-description
-languages.  The current SystemVerilog implementation is the canonical behavior;
-other language versions must match its architectural results before they are
-reported as implemented.
+Qrisc32 is a small 32-bit RISC CPU implemented in several hardware description
+languages. The SystemVerilog implementation defines the reference behavior.
+Every other implementation runs the same instruction images and must produce
+the same architectural results.
+
+Project version: `0.1.0`. See `CHANGELOG.md`, `RELEASE_NOTES.md`, and
+`RELEASING.md` for release scope, notes, and reproducible qualification steps.
 
 ## Status
 
 | Directory | Status |
 | --- | --- |
 | `SystemVerilog/` | Reference five-stage implementation with AXI-style instruction/data interfaces; smoke, flags, ISA, and AXI protocol tests pass with Verilator. |
-| `BSV/` | Five-stage Bluespec SystemVerilog port with AXI instruction/data interfaces; smoke, flags, ISA, and AXI protocol tests pass against the shared vectors. |
-| `Amaranth/` | Five-stage Amaranth RTL with shared smoke, flags, ISA, and AXI smoke checks passing through generated Verilog; the Python model remains a diagnostic oracle. |
-| `Clash/` | Five-stage Clash RTL with AXI instruction/data interfaces; generated-HDL smoke, flags, ISA, and AXI smoke checks are the implementation gate. |
-| `BSC/` | Five-stage Bluespec Classic RTL with AXI instruction/data interfaces; Bluesim smoke, flags, ISA, and AXI smoke checks are the implementation gate, with the older model kept as an oracle. |
+| `BSV/` | Five-stage Bluespec SystemVerilog implementation with AXI instruction/data interfaces; smoke, flags, ISA, and AXI protocol tests pass against the shared vectors. |
+| `Amaranth/` | Five-stage Amaranth RTL tested through generated Verilog; the Python model provides a separate functional check. |
+| `Clash/` | Five-stage Clash RTL with AXI instruction/data interfaces, tested through generated Verilog and Verilator. |
+| `BSC/` | Five-stage Bluespec Classic RTL with AXI instruction/data interfaces and Bluesim tests; the earlier model remains available for comparison. |
+| `ZLang/` | Five-stage ZLang RTL with native-JIT architectural vectors and a checked, typed one-beat AXI4 instruction/data interface. |
 
-The old foundry-specific physical-design flow has been removed.  The repository
-now keeps simulator tests as the default pass/fail gate, with optional generic
+The old foundry-specific physical-design flow has been removed. The repository
+uses simulator tests by default, with optional generic
 Yosys checks writing only under ignored build directories.
 
 Each language directory keeps source and generated files separate.  Implemented
@@ -31,8 +35,8 @@ Verilator and Yosys targets use `qrisc32` consistently.
 ISA opcode, sub-opcode, flag, jump, and increment encodings are centralized in
 language-local shared packages: `SystemVerilog/rtl/Qrisc_pack.sv`,
 `BSV/rtl/Qrisc_pack.bsv`, `BSC/rtl/Qrisc_pack.bs`,
-`Clash/src/Qrisc32ISA.hs`, `Amaranth/src/Qrisc32Model/isa.py`, and
-`tools/qrisc32/isa.py`.
+`Clash/src/Qrisc32ISA.hs`, `Amaranth/src/Qrisc32Model/isa.py`,
+`ZLang/src/isa.zhl`, and `tools/qrisc32/isa.py`.
 
 ## Main Workflow
 
@@ -42,7 +46,7 @@ Run all implemented simulator checks:
 make test
 ```
 
-Run individual parity checks:
+Run individual implementation checks:
 
 ```sh
 make sv-smoke
@@ -56,6 +60,7 @@ make bsv-axi
 make amaranth
 make clash
 make bsc
+make zlang
 make axi
 ```
 
@@ -65,7 +70,7 @@ Run optional generic synthesis checks:
 make synth-generic
 ```
 
-The current generic FPGA synthesis comparison is tracked in
+The current generic FPGA synthesis comparison is documented in
 `doc/rtl_synthesis_compare.md`.
 
 Each implementation also exposes the same local synthesis entry point:
@@ -100,13 +105,26 @@ make asm-tools
 make asm-test
 make c-test
 make toolchain-test
+make binary-compat
+make sort-test
+make sort-binary-compat
 ```
 
-The qrisc32 toolchain lives under `tools/qrisc32/`.  Generated assembly, hex,
-data images, and VCDs are written under ignored `build/toolchain/` paths.
+The qrisc32 toolchain lives under `tools/qrisc32/`. `make binary-compat` builds
+the cases in `tests/toolchain_programs.json` and checks the same instruction and
+data images on SV, BSV, Amaranth, Clash, BSC, and ZLang. It checks expected
+memory, terminal completion, and a non-empty VCD for each case. `make test`
+includes this matrix and ZLang's architectural vectors. Generated assembly,
+hex, data images, HDL, and VCDs stay under ignored `build/` directories.
 
-The explicit parity scripts compare the implemented ports through their public
-test targets:
+The sort programs are maintained as tiny C under `examples/c/`, never as
+hand-encoded instructions. `make sort-test` checks bubble, modified-shell, and
+first-shell/insertion sorts on the SV reference. `make sort-binary-compat`
+runs the same nine generated instruction/data combinations on all six ports.
+Use `make update-smoke-golden` only after reviewing an intentional compiler
+change; normal generation rejects any mismatch with `tests/smoke.hex`.
+
+The comparison scripts run the public test targets for each implementation:
 
 ```sh
 bash tools/equiv_smoke.sh
@@ -115,20 +133,34 @@ bash tools/equiv_isa.sh
 bash tools/equiv_axi.sh
 ```
 
+The ZLang port uses `ZLANG_ROOT` from the environment when set, or
+`zlang` and `python3` on `PATH`. The released Python distribution is
+`zlang-hdl==0.1.0a23` (not the unrelated package named `zlang`).
+`make zlang-check` checks its source; `make zlang` runs all shared programs on
+the native JIT and writes VCDs
+under `ZLang/build/vcd/`; `make zlang-verilog` exports RTL under
+`ZLang/build/verilog/`, and `make zlang-lint` checks the generated HDL.
+The ZLang AXI top uses the updated standard library's full AXI4 field types
+with one-bit IDs and USER widths. It supports single-beat transactions only;
+see `ZLang/README.md` for its interface scope and toolchain requirement.
+
+For local BSV/BSC tests, set `BSC_HOME` and `PICCOLO_ROOT`. The optional Clash
+compiler build uses `CLASH_COMPILER_ROOT`; an installed `clash` on `PATH` also
+works. See `.env.example` and `RELEASING.md` for reproducible setup and checks.
+
 ## Shared Test Vectors
 
 Shared smoke, flags, ISA, and AXI-smoke program metadata lives in
 `tests/vectors.json`.  The referenced hex files stay in `tests/`; implemented
-ports should consume that manifest or generate language-local padded build
-images from it without changing the canonical source vectors.
+implementations should consume that manifest or generate language-local padded
+build images from it without changing the reference vectors.
 
 Reference documentation:
 
 - `tests/README.md`: program intent and expected memory results.
-- `doc/isa.md`: canonical encoding notes for the currently tested ISA subset.
+- `doc/isa.md`: encoding notes for the tested ISA subset.
 
-## Porting Rule
+## Adding An Implementation
 
-A language directory may exist as a scaffold, but it should not be promoted into
-`make test` until it executes the shared smoke, flags, ISA, and AXI-smoke checks
-and matches the SystemVerilog architectural results.
+Add an implementation to `make test` only after it passes the shared smoke,
+flags, ISA, hazards, and AXI checks and matches the SystemVerilog results.

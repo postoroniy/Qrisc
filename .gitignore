@@ -1,4 +1,6 @@
 # Project build outputs
+.env
+.env.local
 build/
 .local/
 **/build/

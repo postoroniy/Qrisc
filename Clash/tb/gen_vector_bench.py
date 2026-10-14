@@ -68,7 +68,12 @@ def padded_size(needed, minimum):
     return size
 
 
-def sv_for(spec, tests_dir):
+def write_if_changed(path, content):
+    if not path.exists() or path.read_text() != content:
+        path.write_text(content)
+
+
+def sv_for(spec, tests_dir, bluespec=False):
     name = spec["name"]
     top = f"qrisc32_{name}_tb"
     expected = {int(k): int(v) for k, v in spec["expected_dmem"].items()}
@@ -84,9 +89,11 @@ def sv_for(spec, tests_dir):
         for idx, value in sorted(expected.items())
     )
 
+    imem_path = (tests_dir / spec["hex"]).resolve()
     dmem_init = ""
     if spec.get("dmem_init"):
-        dmem_init = f'    $readmemh("../tests/{spec["dmem_init"]}", Dram.sram);\n'
+        dmem_path = (tests_dir / spec["dmem_init"]).resolve()
+        dmem_init = f'    $readmemh("{sv_string(str(dmem_path))}", Dram.sram);\n'
 
     imem_words = count_hex_words(tests_dir / spec["hex"])
     dmem_init_words = count_hex_words(tests_dir / spec["dmem_init"]) if spec.get("dmem_init") else 0
@@ -94,9 +101,33 @@ def sv_for(spec, tests_dir):
     imem_size = padded_size(imem_words + 16, 256)
     dmem_size = padded_size(max(dmem_init_words, dmem_expected_words) + 16, 256)
 
-    max_cycles = 500_000 if name == "smoke" else 50_000
+    max_cycles = spec.get("max_cycles", 500_000 if name == "smoke" else 50_000)
     pass_line = sv_string(spec["pass"])
-    hex_file = spec["hex"]
+    dut_clock = ".CLK(clk),\n    .RST_N(!areset)," if bluespec else ".clk(clk),\n    .areset(areset),"
+    dut_verbose = "" if bluespec else "    .verbose(verbose),\n"
+    instruction_write_inputs = ""
+    if bluespec:
+        instruction_write_inputs = """    .axi_instruction_awready(1'b0),
+    .axi_instruction_wready(1'b0),
+    .axi_instruction_bvalid(1'b0),
+    .axi_instruction_bid('0),
+    .axi_instruction_bresp('0),
+    .axi_instruction_buser('0),
+"""
+    terminal_gate = "1'b1"
+    terminal_monitor = ""
+    if "terminal_pc" in spec:
+        terminal_gate = "terminal_hits >= 3"
+        terminal_monitor = f"""
+  logic [3:0] terminal_hits;
+  always_ff @(posedge clk) begin
+    if (areset)
+      terminal_hits <= '0;
+    else if (axi_instruction_arvalid && axi_instruction_arready &&
+             axi_instruction_araddr == 32'd{int(spec['terminal_pc'])} && terminal_hits < 3)
+      terminal_hits <= terminal_hits + 1'b1;
+  end
+"""
 
     return top, max_cycles, f"""`timescale 1ns / 1ns
 `default_nettype none
@@ -274,8 +305,8 @@ module {top}(
   );
 
   qrisc32 dut (
-    .clk(clk),
-    .areset(areset),
+    {dut_clock}
+{instruction_write_inputs}
     .axi_instruction_arready(axi_instruction_arready),
     .axi_instruction_rid(axi_instruction_rid),
     .axi_instruction_rdata(axi_instruction_rdata),
@@ -296,7 +327,7 @@ module {top}(
     .axi_data_bresp(axi_data_bresp),
     .axi_data_buser(axi_data_buser),
     .axi_data_bvalid(axi_data_bvalid),
-    .verbose(verbose),
+{dut_verbose}
     .axi_instruction_arid(axi_instruction_arid),
     .axi_instruction_araddr(axi_instruction_araddr),
     .axi_instruction_arlen(axi_instruction_arlen),
@@ -351,17 +382,36 @@ module {top}(
     for (i = 0; i < DMEM_SIZE; i = i + 1) begin
       Dram.sram[i] = 32'h00000000;
     end
-    $readmemh("../tests/{hex_file}", Iram.sram);
+    $readmemh("{sv_string(str(imem_path))}", Iram.sram);
 {dmem_init}  end
 
   logic [31:0] cycles;
+{terminal_monitor}
+`ifdef QRISC32_SV_HAZARD_MONITOR
+  logic [3:0] nonmem_hazard_run;
+
+  always_ff @(posedge clk) begin
+    if (areset) begin
+      nonmem_hazard_run <= 4'd0;
+    end else if (dut.hazard_stall && !dut.mem_stall) begin
+      nonmem_hazard_run <= nonmem_hazard_run + 4'd1;
+      if (nonmem_hazard_run >= 4'd1) begin
+        $display("FAIL: hazard_stall held for more than one non-memory cycle");
+        $fatal(1);
+      end
+    end else begin
+      nonmem_hazard_run <= 4'd0;
+    end
+  end
+`endif
+
   always_ff @(posedge clk) begin
     if (areset) begin
       cycles <= 32'd0;
       done <= 1'b0;
     end else begin
       cycles <= cycles + 1;
-      if (cycles > 32'd20 && ({expected_expr})) begin
+      if (cycles > 32'd20 && ({terminal_gate}) && ({expected_expr})) begin
         $display("{pass_line}");
         done <= 1'b1;
       end else if (cycles == MAX_CYCLES) begin
@@ -383,6 +433,7 @@ def main():
     parser.add_argument("--manifest", default="../tests/vectors.json")
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--vcd-dir", default="build/vcd")
+    parser.add_argument("--bluespec", action="store_true")
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest)
@@ -394,9 +445,9 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    top, max_cycles, sv_text = sv_for(spec, tests_dir)
-    (out_dir / f"{top}.sv").write_text(sv_text)
-    (out_dir / f"{top}.cpp").write_text(
+    top, max_cycles, sv_text = sv_for(spec, tests_dir, args.bluespec)
+    write_if_changed(out_dir / f"{top}.sv", sv_text)
+    write_if_changed(out_dir / f"{top}.cpp",
         cpp_for(args.vector, top, f"{args.vcd_dir}/{args.vector}.vcd", max_cycles * 2 + 100)
     )
 

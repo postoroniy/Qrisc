@@ -1,9 +1,9 @@
-export PATH:=${HOME}/projects/bluespec/bsc/inst/bin:$(PATH)
-
-DISTRO ?= ${HOME}/projects/bluespec/bsc/inst/lib
-BSV_LIBS ?= ${HOME}/projects/bluespec/Piccolo
-
-BSC = bsc
+BSC ?= $(if $(BSC_HOME),$(BSC_HOME)/bin/bsc,bsc)
+DISTRO ?= $(if $(BSC_HOME),$(BSC_HOME)/lib,)
+BSV_LIBS ?= $(PICCOLO_ROOT)
+ifneq ($(strip $(BSC_HOME)),)
+export PATH := $(BSC_HOME)/bin:$(PATH)
+endif
 VERILATOR ?= verilator
 RTL_DIR = rtl
 TB_DIR = tb
@@ -64,6 +64,12 @@ DMEM_ZERO_HEX = $(HEXDIR)/dmem_zero_1024.hex
 
 all: smoke flags isa axi hazards
 
+.PHONY: check-toolchain
+check-toolchain:
+	@test -s "$(DISTRO)/Verilog/FIFO1.v" || { echo "Set BSC_HOME (or DISTRO) to the Bluespec installation" >&2; exit 1; }
+	@test -s "$(BSV_LIBS)/src_Testbench/Fabrics/AXI4/AXI4_Types.bsv" || { echo "Set PICCOLO_ROOT (or BSV_LIBS) to the Piccolo checkout" >&2; exit 1; }
+	@command -v "$(BSC)" >/dev/null || { echo "Bluespec compiler not found: $(BSC)" >&2; exit 1; }
+
 # Create required directories.
 $(BDIR) $(VDIR) $(IDIR) $(SDIR) $(SIMDIR) $(HEXDIR) $(VCD_DIR):
 	mkdir -p $@
@@ -78,7 +84,7 @@ $(BDIR)/%.bo: | $(BDIR) $(IDIR) $(VDIR)
 	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) $(SRC)
 
 # Build all library objects.
-lib: $(LIB_OBJS)
+lib: check-toolchain $(LIB_OBJS)
 
 # Compile intermediate Bluespec files.
 compile: lib $(RTL_SOURCES) | $(BDIR) $(IDIR) $(VDIR)
@@ -95,9 +101,11 @@ $(VERILOG_OUTPUT): $(RTL_SOURCES) | $(BDIR) $(VDIR) $(IDIR) $(SDIR) $(SIMDIR) co
 	$(BSC) $(BSC_COMPILATION_FLAGS) -p $(BSC_PATHS) -info-dir $(IDIR) -vdir $(VDIR) \
 		-remove-dollar -g $(BSV_TOP) -verilog $(BSV_SOURCES)
 
+verilog: $(VERILOG_OUTPUT)
+
 synth: $(VERILOG_OUTPUT)
 	mkdir -p $(BDIR)/yosys
-	yosys -s ys
+	yosys -p 'read_verilog "$(DISTRO)/Verilog/FIFO1.v"; read_verilog "$(DISTRO)/Verilog/FIFO2.v"; script ys'
 
 lint: BSC_COMPILATION_FLAGS = $(BSC_SOURCE_LINT_FLAGS)
 lint: $(VERILOG_OUTPUT) $(LINT_WAIVERS)
@@ -172,4 +180,4 @@ hazards: lib compile $(HAZARDS_HEX) $(DMEM_ZERO_HEX) | $(SDIR) $(BDIR) $(IDIR) $
 	grep -q 'PASS: hazard interlock vector' "$$log" || exit 1; \
 	test -s "$$vcd"
 
-.PHONY: all clean compile lib synth lint smoke flags isa axi hazards
+.PHONY: all clean compile lib verilog synth lint smoke flags isa axi hazards

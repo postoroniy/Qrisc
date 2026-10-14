@@ -48,13 +48,13 @@ module axi_read_mem
 
         if (arvalid && araddr > adr_limit * 4) begin
             if (verbose)
-                $display(".................................[%m] AXI read out of limit address %08x", araddr);
+                $display(".................................[%m] AXI read address out of range %08x", araddr);
             stop_active = 1'b1;
         end
 
         if (arvalid && araddr[1:0] != 0) begin
             if (verbose)
-                $display(".................................[%m] AXI read by non align address %08x", araddr);
+                $display(".................................[%m] AXI unaligned read address %08x", araddr);
             stop_active = 1'b1;
         end
 
@@ -140,25 +140,25 @@ module axi_rw_mem
 
         if (awvalid && awaddr > adr_limit * 4) begin
             if (verbose)
-                $display(".................................[%m] AXI write out of limit address %08x", awaddr);
+                $display(".................................[%m] AXI write address out of range %08x", awaddr);
             stop_active = 1'b1;
         end
 
         if (arvalid && araddr > adr_limit * 4) begin
             if (verbose)
-                $display(".................................[%m] AXI read out of limit address %08x", araddr);
+                $display(".................................[%m] AXI read address out of range %08x", araddr);
             stop_active = 1'b1;
         end
 
         if (awvalid && awaddr[1:0] != 0) begin
             if (verbose)
-                $display(".................................[%m] AXI write by non align address %08x", awaddr);
+                $display(".................................[%m] AXI unaligned write address %08x", awaddr);
             stop_active = 1'b1;
         end
 
         if (arvalid && araddr[1:0] != 0) begin
             if (verbose)
-                $display(".................................[%m] AXI read by non align address %08x", araddr);
+                $display(".................................[%m] AXI unaligned read address %08x", araddr);
             stop_active = 1'b1;
         end
 

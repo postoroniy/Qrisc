@@ -1,0 +1,413 @@
+// Five-stage, in-order qrisc32 core: IF, ID, EX, MEM, WB.
+// The memory ports are zero-wait requests; Qrisc32Axi adapts them to AXI.
+import qrisc32.isa
+import std.bus.axi4
+
+fn reads_pending(use_r1 : bit, use_r2 : bit, use_dst : bit,
+                 src1 : u5, src2 : u5, dst : u5, pending : u5) -> bit {
+    (use_r1 & (src1 == pending)) | (use_r2 & (src2 == pending)) |
+        (use_dst & (dst == pending))
+}
+
+fn read_register(lo : vec<16,u32>, hi : vec<16,u32>, index : u5) -> u32 {
+    (index >= 16) ? hi[truncate<4>(index)] : lo[truncate<4>(index)]
+}
+
+module MulIntent {
+    in a, b : u32
+    out product : u64
+    product = implement {
+        a * b
+        intent { minimize lut }
+    }
+}
+
+module Qrisc32 {
+    clock clk reset rst
+    in enable : bit
+    in instruction : u32
+    in data_rdata : u32
+    out reg pc : u32 = 0
+    out data_addr : u32
+    out data_wdata : u32
+    out data_read : bit
+    out data_write : bit
+    out reg zero_flag : bit = 0
+    out reg carry_flag : bit = 0
+    out reg id_valid_out : bit = 0
+    out reg ex_valid_out : bit = 0
+    out reg mem_valid_out : bit = 0
+    out reg wb_valid_out : bit = 0
+    out hazard_stall : bit
+    out terminal_jump : bit
+
+    // IF holds the next fetch address. All following stages carry valid bits.
+    reg id_pc : u32 = 0
+    reg id_inst : u32 = 0
+    reg ex_pc : u32 = 0
+    reg ex_inst : u32 = 0
+    reg ex_r1 : u32 = 0
+    reg ex_r2 : u32 = 0
+    reg ex_dst : u32 = 0
+    reg mem_addr : u32 = 0
+    reg mem_data : u32 = 0
+    reg mem_result : u32 = 0
+    reg mem_dst : u5 = 0
+    reg mem_write : bit = 0
+    reg mem_inc_dst : u5 = 0
+    reg mem_inc_value : u32 = 0
+    reg mem_inc : bit = 0
+    reg mem_load : bit = 0
+    reg mem_store : bit = 0
+    reg wb_result : u32 = 0
+    reg wb_dst : u5 = 0
+    reg wb_write : bit = 0
+    reg wb_inc_dst : u5 = 0
+    reg wb_inc_value : u32 = 0
+    reg wb_inc : bit = 0
+    reg regs_lo : vec<16,u32> = repeat(0)
+    reg regs_hi : vec<16,u32> = repeat(0)
+
+    // ID reads the register file only after all older writers have drained.
+    id_op : Opcode = enum_decode<Opcode>(id_inst[31:28], Opcode.Invalid)
+    id_load_mode : LoadMode = enum_decode<LoadMode>(id_inst[27:26], LoadMode.Register)
+    id_jump_mode : JumpMode = enum_decode<JumpMode>(id_inst[27:26], JumpMode.Absolute)
+    id_alu_op : AluOp = enum_decode<AluOp>(id_inst[27:25], AluOp.And)
+    id_dst : u5 = bitcast<u5>(id_inst[4:0])
+    id_src1 : u5 = bitcast<u5>(id_inst[9:5])
+    id_src2 : u5 = bitcast<u5>(id_inst[14:10])
+    id_offset_reg : bit = (id_inst & 0x02000000) != 0
+    id_use_r1 : bit = (id_op == Opcode.Load) | (id_op == Opcode.Store) |
+        (id_op == Opcode.Alu) | (id_op == Opcode.LoadFlag) |
+        ((id_op == Opcode.Jump) & (id_jump_mode != JumpMode.Absolute) & id_offset_reg) |
+        ((id_op == Opcode.JumpFlag) & id_offset_reg)
+    id_use_r2 : bit = (id_op == Opcode.Alu) | (id_op == Opcode.LoadFlag) |
+        ((id_op == Opcode.Load) & ((id_load_mode == LoadMode.Register) |
+            ((id_load_mode == LoadMode.Memory) & id_offset_reg))) |
+        ((id_op == Opcode.Store) & id_offset_reg) |
+        ((id_op == Opcode.Jump) & (id_jump_mode != JumpMode.Absolute) & id_offset_reg) |
+        ((id_op == Opcode.JumpFlag) & id_offset_reg)
+    id_use_dst : bit = ((id_op == Opcode.Load) &
+            ((id_load_mode == LoadMode.High) | (id_load_mode == LoadMode.Low))) |
+        (id_op == Opcode.Store) |
+        ((id_op == Opcode.Alu) & (id_alu_op == AluOp.Compare)) |
+        ((id_op == Opcode.Jump) & (id_jump_mode == JumpMode.Return))
+    id_use_flags : bit = (id_op == Opcode.JumpFlag) | (id_op == Opcode.LoadFlag)
+
+    ex_op : Opcode = enum_decode<Opcode>(ex_inst[31:28], Opcode.Invalid)
+    ex_load_mode : LoadMode = enum_decode<LoadMode>(ex_inst[27:26], LoadMode.Register)
+    ex_jump_mode : JumpMode = enum_decode<JumpMode>(ex_inst[27:26], JumpMode.Absolute)
+    ex_flag_mode : FlagMode = enum_decode<FlagMode>(ex_inst[27:26], FlagMode.Zero)
+    ex_alu_op : AluOp = enum_decode<AluOp>(ex_inst[27:25], AluOp.And)
+    ex_dst_reg : u5 = bitcast<u5>(ex_inst[4:0])
+    ex_src1_reg : u5 = bitcast<u5>(ex_inst[9:5])
+    ex_src2_reg : u5 = bitcast<u5>(ex_inst[14:10])
+    ex_incr_mode : IncrMode = enum_decode<IncrMode>(ex_inst[24:22], IncrMode.None)
+    ex_incr : u32 = switch ex_incr_mode {
+        IncrMode.None => 0
+        IncrMode.One => 1
+        IncrMode.Two => 2
+        IncrMode.Four => 4
+        IncrMode.NoneAlt => 0
+        IncrMode.MinusOne => 0xffffffff
+        IncrMode.MinusTwo => 0xfffffffe
+        IncrMode.MinusFour => 0xfffffffc
+    }
+    ex_offset_reg : bit = (ex_inst & 0x02000000) != 0
+    ex_off15 : u15 = bitcast<u15>(ex_inst[24:10])
+    ex_signed_off : u32 = (ex_off15 >= 16384) ?
+        (extend<32>(ex_off15) | 0xffff8000) : extend<32>(ex_off15)
+    ex_offset : u32 = ex_offset_reg ? ex_r2 : ex_signed_off
+    ex_imm16 : u16 = bitcast<u16>(ex_inst[20:5])
+    ex_arch_pc : u32 = truncate<32>(ex_pc + 8)
+    ex_condition : bit = switch ex_flag_mode {
+        FlagMode.Zero => zero_flag
+        FlagMode.NotZero => ~zero_flag
+        FlagMode.Carry => carry_flag
+        FlagMode.NotCarry => ~carry_flag
+    }
+    ex_inc_enable : bit = switch ex_op {
+        Opcode.Load => ((ex_load_mode == LoadMode.Register) &
+            (ex_incr_mode != IncrMode.None) & (ex_incr_mode != IncrMode.NoneAlt)) |
+            ((ex_load_mode == LoadMode.Memory) & ex_offset_reg)
+        Opcode.Store => ex_offset_reg
+        Opcode.Jump => (ex_jump_mode != JumpMode.Absolute) & ex_offset_reg
+        Opcode.JumpFlag => ex_offset_reg
+        Opcode.Alu => 0
+        Opcode.LoadFlag => 0
+        Opcode.Invalid => 0
+    }
+    ex_add_wide : u33 = ex_r1 + ex_r2
+    // Resource intent applies to the combinational EX multiplier; stage
+    // registers, not this annotation, define the architectural latency.
+    multiplier : MulIntent
+    multiplier.a = ex_r1
+    multiplier.b = ex_r2
+    ex_mul_wide : u64 = multiplier.product
+    ex_shl_wide : u33 = extend<33>(ex_r1) << truncate<5>(ex_r2)
+    ex_shr_wide : u33 = concat(ex_r1, bitcast<u1>(0)) >> ex_r2
+    ex_alu_result : u32 = switch ex_alu_op {
+        AluOp.And => ex_r1 & ex_r2
+        AluOp.Or => ex_r1 | ex_r2
+        AluOp.Xor => ex_r1 ^ ex_r2
+        AluOp.Add => truncate<32>(ex_add_wide)
+        AluOp.Mul => truncate<32>(ex_mul_wide)
+        AluOp.ShiftLeft => truncate<32>(ex_shl_wide)
+        AluOp.ShiftRight => truncate<32>(ex_shr_wide >> 1)
+        AluOp.Compare => ex_dst
+    }
+    ex_alu_carry : bit = switch ex_alu_op {
+        AluOp.And => 0
+        AluOp.Or => 0
+        AluOp.Xor => 0
+        AluOp.Add => bitcast<bit>(ex_add_wide[32:32])
+        AluOp.Mul => bitcast<bit>(ex_mul_wide[32:32])
+        AluOp.ShiftLeft => bitcast<bit>(ex_shl_wide[32:32])
+        AluOp.ShiftRight => bitcast<bit>(ex_shr_wide[0:0])
+        AluOp.Compare => 0
+    }
+    ex_write : bit = switch ex_op {
+        Opcode.Load => (ex_load_mode != LoadMode.Register) | (ex_dst_reg != ex_src1_reg)
+        Opcode.Store => 0
+        Opcode.Jump => ex_jump_mode == JumpMode.Call
+        Opcode.JumpFlag => 0
+        Opcode.Alu => ex_alu_op != AluOp.Compare
+        Opcode.LoadFlag => 1
+        Opcode.Invalid => 0
+    }
+    ex_result : u32 = switch ex_op {
+        Opcode.Load => switch ex_load_mode {
+            LoadMode.Register => ex_r1
+            LoadMode.High => (ex_dst & 0x0000ffff) | (extend<32>(ex_imm16) << 16)
+            LoadMode.Low => (ex_dst & 0xffff0000) | extend<32>(ex_imm16)
+            LoadMode.Memory => 0
+        }
+        Opcode.Store => ex_dst
+        Opcode.Jump => ex_arch_pc
+        Opcode.JumpFlag => ex_dst
+        Opcode.Alu => ex_alu_result
+        Opcode.LoadFlag => ex_condition ? ex_r1 : ex_r2
+        Opcode.Invalid => ex_dst
+    }
+    ex_jump : bit = ex_valid_out & ((ex_op == Opcode.Jump) |
+        ((ex_op == Opcode.JumpFlag) & ex_condition))
+    ex_relative_target : u32 = truncate<32>(ex_arch_pc + ex_offset)
+    ex_jump_target : u32 = switch ex_jump_mode {
+        JumpMode.Absolute => extend<32>(bitcast<u26>(ex_inst[25:0]))
+        JumpMode.Relative => ex_relative_target
+        JumpMode.Call => ex_relative_target
+        JumpMode.Return => ex_dst
+    }
+    ex_target : u32 = (ex_op == Opcode.JumpFlag) ? ex_relative_target : ex_jump_target
+
+    // A scoreboard is sufficient for architectural parity; independent
+    // instructions issue every cycle while true dependencies wait for WB.
+    ex_conflict : bit = ex_valid_out & (
+        (ex_write & reads_pending(id_use_r1, id_use_r2, id_use_dst,
+            id_src1, id_src2, id_dst, ex_dst_reg)) |
+        (ex_inc_enable & reads_pending(id_use_r1, id_use_r2, id_use_dst,
+            id_src1, id_src2, id_dst, ex_src2_reg)) |
+        (id_use_flags & (ex_op == Opcode.Alu)))
+    mem_conflict : bit = mem_valid_out & (
+        (mem_write & reads_pending(id_use_r1, id_use_r2, id_use_dst,
+            id_src1, id_src2, id_dst, mem_dst)) |
+        (mem_inc & reads_pending(id_use_r1, id_use_r2, id_use_dst,
+            id_src1, id_src2, id_dst, mem_inc_dst)))
+    wb_conflict : bit = wb_valid_out & (
+        (wb_write & reads_pending(id_use_r1, id_use_r2, id_use_dst,
+            id_src1, id_src2, id_dst, wb_dst)) |
+        (wb_inc & reads_pending(id_use_r1, id_use_r2, id_use_dst,
+            id_src1, id_src2, id_dst, wb_inc_dst)))
+    stall : bit = id_valid_out & (ex_conflict | mem_conflict | wb_conflict)
+    hazard_stall = stall
+    terminal_jump = ex_jump & (ex_target == ex_pc)
+    data_addr = mem_addr
+    data_wdata = mem_data
+    data_read = mem_valid_out & mem_load
+    data_write = mem_valid_out & mem_store
+    assert exclusive_memory @ clk { !(data_read & data_write) }
+    assert branch_from_ex @ clk { !ex_jump | ex_valid_out }
+    assert interlock_from_id @ clk { !stall | id_valid_out }
+    assert no_load_store_overlap @ clk { !(mem_load & mem_store) }
+    cover overlapping_stages @ clk {
+        id_valid_out & ex_valid_out & mem_valid_out & wb_valid_out
+    }
+    cover interlock @ clk { stall }
+    cover redirect @ clk { ex_jump }
+
+    when enable {
+        // WB commit happens after ID sampled operands at this edge; the
+        // scoreboard therefore keeps WB destinations busy until the next.
+        regs_lo <- generate(i in 0..16) {
+            (wb_valid_out & wb_inc & (wb_inc_dst == extend<5>(i))) ? wb_inc_value :
+            ((wb_valid_out & wb_write & (wb_dst == extend<5>(i))) ? wb_result : regs_lo[i])
+        }
+        regs_hi <- generate(i in 0..16) {
+            (wb_valid_out & wb_inc & (wb_inc_dst == truncate<5>(i + 16))) ? wb_inc_value :
+            ((wb_valid_out & wb_write & (wb_dst == truncate<5>(i + 16))) ? wb_result : regs_hi[i])
+        }
+        wb_valid_out <- mem_valid_out
+        wb_result <- mem_load ? data_rdata : mem_result
+        wb_dst <- mem_dst
+        wb_write <- mem_write
+        wb_inc_dst <- mem_inc_dst
+        wb_inc_value <- mem_inc_value
+        wb_inc <- mem_inc
+
+        mem_valid_out <- ex_valid_out
+        mem_addr <- truncate<32>(ex_r1 + ex_offset)
+        mem_data <- ex_dst
+        mem_result <- ex_result
+        mem_dst <- ex_dst_reg
+        mem_write <- ex_write
+        mem_inc_dst <- ex_src2_reg
+        mem_inc_value <- truncate<32>(ex_r2 + ex_incr)
+        mem_inc <- ex_inc_enable
+        mem_load <- (ex_op == Opcode.Load) & (ex_load_mode == LoadMode.Memory)
+        mem_store <- ex_op == Opcode.Store
+        when ex_valid_out & (ex_op == Opcode.Alu) {
+            zero_flag <- (ex_alu_op == AluOp.Compare) ? (ex_r1 == ex_r2) : (ex_alu_result == 0)
+            carry_flag <- (ex_alu_op == AluOp.Compare) ? (ex_r1 < ex_r2) : ex_alu_carry
+        }
+
+        when ex_jump {
+            // ID and the currently fetched word are both wrong-path.
+            ex_valid_out <- 0
+            id_valid_out <- 0
+            pc <- ex_target
+        } else {
+            when stall {
+                ex_valid_out <- 0
+            } else {
+                ex_valid_out <- id_valid_out
+                ex_pc <- id_pc
+                ex_inst <- id_inst
+                ex_r1 <- read_register(regs_lo, regs_hi, id_src1)
+                ex_r2 <- read_register(regs_lo, regs_hi, id_src2)
+                ex_dst <- read_register(regs_lo, regs_hi, id_dst)
+                id_valid_out <- 1
+                id_pc <- pc
+                id_inst <- instruction
+                pc <- truncate<32>(pc + 4)
+            }
+        }
+    }
+}
+
+// Native typed AXI channels adapt delayed responses to the zero-wait core.
+module Qrisc32Axi {
+    clock clk reset rst
+    in enable : bit
+    instruction_axi : AXI4ReadWithUser<32,32,1,1,1>.master
+    data_axi : AXI4WithUser<32,32,1,1,1,1,1,1,1>.master
+    out core_pc : u32
+    out core_stall : bit
+    out core_terminal_jump : bit
+    out core_id_valid : bit
+    out core_ex_valid : bit
+    out core_mem_valid : bit
+    out core_wb_valid : bit
+    out reg bus_error : bit = 0
+
+    core : Qrisc32
+    reg instruction_pending : bit = 0
+    reg instruction_ready : bit = 0
+    reg instruction_word : u32 = 0
+    reg read_pending : bit = 0
+    reg data_done : bit = 0
+    reg data_word : u32 = 0
+    reg aw_done : bit = 0
+    reg w_done : bit = 0
+
+    need_read : bit = core.data_read
+    need_write : bit = core.data_write
+    can_advance : bit = !(need_read | need_write) | data_done
+    issue : bit = enable & instruction_ready & can_advance
+    core.enable = issue
+    core.instruction = instruction_word
+    core.data_rdata = data_word
+    core_pc = core.pc
+    core_stall = core.hazard_stall
+    core_terminal_jump = core.terminal_jump
+    core_id_valid = core.id_valid_out
+    core_ex_valid = core.ex_valid_out
+    core_mem_valid = core.mem_valid_out
+    core_wb_valid = core.wb_valid_out
+
+    instruction_axi.ar.valid = enable & !instruction_ready & !instruction_pending
+    instruction_axi.ar.payload = Axi4AddressUser {
+        id = 0
+        addr = core.pc
+        len = 0
+        size = 2
+        burst = 1
+        lock = 0
+        cache = 0
+        prot = 0
+        qos = 0
+        region = 0
+        user = 0
+    }
+    instruction_axi.r.ready = instruction_pending
+
+    data_address : Axi4AddressUser<32,1,1> = Axi4AddressUser {
+        id = 0
+        addr = core.data_addr
+        len = 0
+        size = 2
+        burst = 1
+        lock = 0
+        cache = 0
+        prot = 0
+        qos = 0
+        region = 0
+        user = 0
+    }
+    data_axi.ar.valid = enable & need_read & !data_done & !read_pending
+    data_axi.ar.payload = data_address
+    data_axi.r.ready = read_pending
+
+    data_axi.aw.valid = enable & need_write & !data_done & !aw_done
+    data_axi.aw.payload = data_address
+    data_axi.w.valid = enable & need_write & !data_done & !w_done
+    data_axi.w.payload = Axi4WriteDataUser {
+        data = bitcast<bits<32>>(core.data_wdata)
+        strb = 15
+        last = 1
+        user = 0
+    }
+    data_axi.b.ready = aw_done & w_done
+
+    assert one_instruction_outstanding @ clk {
+        !(instruction_pending & instruction_ready)
+    }
+    assert read_response_not_done @ clk { !(read_pending & data_done) }
+    cover fetch_wait @ clk { instruction_pending }
+    cover data_wait @ clk { read_pending }
+    cover split_write @ clk { aw_done & !w_done }
+
+    when enable {
+        instruction_pending <- (instruction_pending | instruction_axi.ar.transfer) &
+            !instruction_axi.r.transfer
+        instruction_ready <- (instruction_ready & !issue) | instruction_axi.r.transfer
+        read_pending <- (read_pending | data_axi.ar.transfer) & !data_axi.r.transfer
+        data_done <- (data_done & !issue) | data_axi.r.transfer | data_axi.b.transfer
+        aw_done <- (aw_done & !issue) | data_axi.aw.transfer
+        w_done <- (w_done & !issue) | data_axi.w.transfer
+        bus_error <- bus_error |
+            (instruction_axi.r.transfer & ((instruction_axi.r.payload.id != 0) |
+                (instruction_axi.r.payload.resp != 0) |
+                !instruction_axi.r.payload.last)) |
+            (data_axi.r.transfer & ((data_axi.r.payload.id != 0) |
+                (data_axi.r.payload.resp != 0) |
+                !data_axi.r.payload.last)) |
+            (data_axi.b.transfer & ((data_axi.b.payload.id != 0) |
+                (data_axi.b.payload.resp != 0)))
+        when instruction_axi.r.transfer {
+            instruction_word <- bitcast<u32>(instruction_axi.r.payload.data)
+        }
+        when data_axi.r.transfer {
+            data_word <- bitcast<u32>(data_axi.r.payload.data)
+        }
+    }
+}

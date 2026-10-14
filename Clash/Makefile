@@ -1,10 +1,14 @@
 RUNGHC ?= runghc
-GHC ?= $(CLASH_GHC)
-CLASH_COMPILER_ROOT ?= ../../../clash/clash-compiler
-CLASH_GHC ?= $(HOME)/.ghcup/ghc/9.6.7/bin/ghc
+CLASH_COMPILER_ROOT ?=
 CLASH_BIN_DIR ?= ../.local/bin
-CLASH_PACKAGE_DB ?= $(HOME)/.cabal/store/ghc-9.6.7/package.db
 CLASH ?= $(if $(wildcard $(CLASH_BIN_DIR)/clash),$(CLASH_BIN_DIR)/clash,clash)
+CLASH_GHC_VERSION := $(shell $(CLASH) --numeric-version 2>/dev/null)
+CLASH_GHC_PREFIX := $(shell libdir="$$($(CLASH) --print-libdir 2>/dev/null)"; \
+	test -n "$$libdir" && dirname "$$(dirname "$$(dirname "$$libdir")")")
+CLASH_GHC ?= $(if $(CLASH_GHC_PREFIX),$(CLASH_GHC_PREFIX)/bin/ghc,ghc)
+GHC ?= $(CLASH_GHC)
+CLASH_PACKAGE_DB ?= $(firstword $(wildcard $(HOME)/.cabal/store/ghc-$(CLASH_GHC_VERSION)*/package.db))
+CLASH_PACKAGE_DB_FLAG = $(if $(CLASH_PACKAGE_DB),-package-db $(CLASH_PACKAGE_DB),)
 
 RUN_MODEL = $(RUNGHC) -isrc tb/Main.hs
 BUILD_DIR = build
@@ -20,7 +24,7 @@ VERILATOR_THREADS ?= 2
 VERILATOR_ENV ?= CCACHE_DISABLE=1
 LINT_WAIVERS ?= lint/verilator.vlt
 LOCAL_CLASH_PROJECT := build/local-clash/cabal.project
-LOCAL_CLASH_ROOT := $(abspath $(CLASH_COMPILER_ROOT))
+LOCAL_CLASH_ROOT := $(if $(CLASH_COMPILER_ROOT),$(abspath $(CLASH_COMPILER_ROOT)),)
 LOCAL_CLASH_BINDIR := $(abspath $(CLASH_BIN_DIR))
 
 .PHONY: all smoke flags isa axi hazards test verilog synth lint \
@@ -32,6 +36,7 @@ LOCAL_CLASH_BINDIR := $(abspath $(CLASH_BIN_DIR))
 all: smoke flags isa axi hazards
 
 $(LOCAL_CLASH_PROJECT): FORCE
+	@test -n "$(CLASH_COMPILER_ROOT)" || { echo "Set CLASH_COMPILER_ROOT to a Clash compiler checkout" >&2; exit 1; }
 	mkdir -p $(dir $@)
 	{ \
 		printf 'packages:\n'; \
@@ -80,7 +85,7 @@ clash-version:
 
 $(HDL_STAMP): src/Qrisc32RTL.hs src/Qrisc32ISA.hs
 	mkdir -p $(HDL_DIR)
-	$(CLASH) --verilog -package-db $(CLASH_PACKAGE_DB) -isrc -outputdir $(BUILD_DIR)/clash -fclash-hdldir $(HDL_DIR) -fclash-clear Qrisc32RTL
+	$(CLASH) --verilog $(CLASH_PACKAGE_DB_FLAG) -isrc -outputdir $(BUILD_DIR)/clash -fclash-hdldir $(HDL_DIR) -fclash-clear Qrisc32RTL
 	touch $(HDL_STAMP)
 
 verilog: $(HDL_STAMP)
@@ -90,7 +95,7 @@ synth: $(HDL_STAMP) ys
 	yosys -s ys
 
 lint: $(HDL_STAMP) $(LINT_WAIVERS)
-	$(GHC) -XNoImplicitPrelude -Wall -fno-code -package-db $(CLASH_PACKAGE_DB) -isrc src/Qrisc32ISA.hs src/Qrisc32RTL.hs
+	$(GHC) -XNoImplicitPrelude -Wall -fno-code $(CLASH_PACKAGE_DB_FLAG) -isrc src/Qrisc32ISA.hs src/Qrisc32RTL.hs
 	$(GHC) -Wall -fno-code -isrc src/Qrisc32ISA.hs src/Qrisc32Model.hs tb/Main.hs
 	$(VERILATOR_ENV) verilator $(VERILATOR_LINT_FLAGS) $(LINT_WAIVERS) $(HDL_DIR)/Qrisc32RTL.topEntity/qrisc32.v --top-module qrisc32
 
